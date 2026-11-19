@@ -37,7 +37,7 @@ const SESSION_RE = /^[a-z0-9]{1,20}$/;
 /** Acepta '3000', 'localhost:3000', 'http://127.0.0.1:5173/ruta'. Devuelve origen y ruta, o undefined. */
 export function normalizeTarget(input: string): { origin: string; path: string } | undefined {
   let s = input.trim();
-  if (s === '') return undefined;
+  if (s === '' || s.startsWith('/')) return undefined; // «/pacientes» es una ruta, no un servidor llamado «pacientes»
   if (/^\d{2,5}$/.test(s)) s = 'http://localhost:' + s;
   else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'http://' + s;
   let u: URL;

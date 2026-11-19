@@ -81,6 +81,11 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 ### Fase 5 — cerrada el 2026-11-19
 - Borradores en `docs/LANZAMIENTO.md`. Publicarlos es del titular.
 
+### Después del lanzamiento — 0.1.1 (19-11)
+- **Banco de navegador intermitente en CI** (4 rojos el mismo día): Chrome tardaba más de 10 s en abrir su puerto en un runner frío, y CLI-1 miraba a los 700 ms. Ahora 30 s con un reintento, y CLI-1/CLI-2 esperan al evento. `e28c690`.
+- **No había forma de abrir una web publicada** (lo vio el titular con `https://neurosinais.argalla.com/pacientes`): con un servidor detectado, el botón lo abría directamente, y con un mosaico abierto solo lo traía al frente. Ahora el botón ofrece siempre una lista donde se escribe la dirección, hay un comando «Abrir mosaico de una dirección» y un botón «Dirección» en el panel. Prueba I-8 (comprobada con la función antigua: falla). Revisión independiente: 3 defectos (matriz aplanada, palabra suelta sin abrir, `/ruta` tomada por servidor), corregidos.
+- Probado el proxy contra webs publicadas (estoxo.gal, wikipedia.org, github.com): HTTPS, agente inyectado y cookies reescritas. Límites en producción documentados en el README.
+
 ## Si esto se retoma en otra sesión
 
 Todo cerrado. Siguiente versión: subir versión y CHANGELOG, etiqueta `vX.Y.Z`; `node scripts/gh-runs.mjs release --esperar` sigue la publicación. Lo pendiente está en `docs/ENTREGA.md`.

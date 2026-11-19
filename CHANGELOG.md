@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-11-19
+
+### Added
+
+- **Open mosaic for a URL…** command and an **Address** button in the panel: type any address with its path, local or deployed, also when a mosaic is already open.
+
+### Fixed
+
+- With a dev server detected, the status bar button opened it straight away and there was no way to type another address. It now shows the servers found plus **Another address…**, and an address typed in the list can be opened with Enter.
+
 ## [0.1.0] — 2026-11-19
 
 First public release. Free.

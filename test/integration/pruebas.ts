@@ -2,6 +2,7 @@
 // si pasó y por qué; el lanzador (run.ts) falla si alguna no pasa.
 import * as vscode from 'vscode';
 import * as net from 'node:net';
+import * as http from 'node:http';
 import type { SondaApi } from '../../src/extension.ts';
 import { findDevice } from '../../src/core/devices.ts';
 import { SYNC_ALL, addSession, applyEdit, type Mosaic } from '../../src/core/mosaic.ts';
@@ -282,6 +283,82 @@ export async function pruebas(api: SondaApi, ext: vscode.Extension<unknown>): Pr
       } catch {
         /* nada */
       }
+    }
+  });
+
+  // I-8 · «Abrir una dirección»: lo que se escribe (con ruta) es lo que se abre, haya o no un servidor detectado,
+  // y con un mosaico abierto lo sustituye en vez de solo traerlo al frente (lo que pasaba el 19-11 con una web
+  // publicada: el botón abría el servidor local detectado y no había dónde escribir la dirección).
+  await prueba('I-8', async () => {
+    // Cada celda avisa al cargar con su ancho: se cuentan celdas distintas, no peticiones (una celda que recarga
+    // tres veces no cuenta como tres).
+    const vistas = new Map<string, Set<string>>();
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://x');
+      if (u.pathname === '/w') {
+        const p = u.searchParams.get('p') ?? '';
+        if (!vistas.has(p)) vistas.set(p, new Set());
+        vistas.get(p)!.add(u.searchParams.get('w') ?? '');
+        return void res.writeHead(204).end();
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(`<!doctype html><html><head><title>i8</title></head><body>${u.pathname}<script>navigator.sendBeacon('/w?p='+encodeURIComponent(location.pathname)+'&w='+innerWidth)</script></body></html>`);
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const origin = `http://localhost:${(srv.address() as net.AddressInfo).port}`;
+    const w = vscode.window as unknown as { showInputBox: typeof vscode.window.showInputBox; createQuickPick: typeof vscode.window.createQuickPick; showQuickPick: typeof vscode.window.showQuickPick };
+    const original = { showInputBox: w.showInputBox, createQuickPick: w.createQuickPick, showQuickPick: w.showQuickPick };
+    const mosaicos = (): vscode.Tab[] => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.includes('viewkeeper.mosaic'));
+    const celdas = (p: string): number => vistas.get(p)?.size ?? 0;
+    const esperadas = (vscode.workspace.getConfiguration('viewkeeper').get<string[]>('defaultDevices') ?? []).length || 3;
+    const f: string[] = [];
+    try {
+      await vscode.window.tabGroups.close(mosaicos());
+      // 1) El botón de la barra de estado: en su lista se escribe la dirección y se pulsa Intro. Si en esta máquina
+      //    no hay servidor de desarrollo, la lista no sale y se pregunta con la casilla: las dos dan lo mismo.
+      let lista = false;
+      w.createQuickPick = (() => {
+        lista = true;
+        let cambio: (v: string) => void = () => {};
+        let acepta: () => void = () => {};
+        let oculta: () => void = () => {};
+        const nada = { dispose() {} };
+        const qp = {
+          items: [] as vscode.QuickPickItem[],
+          selectedItems: [] as vscode.QuickPickItem[],
+          title: '',
+          placeholder: '',
+          onDidChangeValue: (cb: (v: string) => void) => ((cambio = cb), nada),
+          onDidAccept: (cb: () => void) => ((acepta = cb), nada),
+          onDidHide: (cb: () => void) => ((oculta = cb), nada),
+          show: () =>
+            void setTimeout(() => {
+              cambio(`${origin}/pacientes`);
+              qp.selectedItems = [qp.items[0]];
+              acepta();
+            }, 50),
+          hide: () => oculta(),
+          dispose: () => {},
+        };
+        return qp;
+      }) as unknown as typeof vscode.window.createQuickPick;
+      // Una lista que no deja escribir (la de antes) se cierra sin elegir: sin esto la prueba esperaría a una persona.
+      w.showQuickPick = (async () => undefined) as unknown as typeof vscode.window.showQuickPick;
+      w.showInputBox = async () => `${origin}/pacientes`;
+      await vscode.commands.executeCommand('viewkeeper.open');
+      if (!(await until(() => celdas('/pacientes') >= esperadas, 15000))) f.push(`botón de la barra (lista=${lista}): la ruta escrita no se abrió en ${esperadas} celdas: ${JSON.stringify([...vistas].map(([p, s]) => [p, [...s]]))}`);
+      // 2) Con el mosaico abierto, «Dirección» lo cambia en vez de traerlo al frente.
+      w.showInputBox = async () => `${origin}/agenda`;
+      await vscode.commands.executeCommand('viewkeeper.openUrl');
+      if (!(await until(() => celdas('/agenda') >= esperadas, 15000))) f.push(`con un mosaico abierto, la dirección nueva no se abrió en ${esperadas} celdas: ${JSON.stringify([...vistas].map(([p, s]) => [p, [...s]]))}`);
+      if (mosaicos().length !== 1) f.push(`paneles de mosaico abiertos: ${mosaicos().length}, se esperaba 1`);
+      return [f.length === 0, f.length ? f.join('; ') : `botón (lista=${lista}) y «Dirección»: ${JSON.stringify([...vistas].map(([p, s]) => [p, [...s]]))}`];
+    } finally {
+      w.showInputBox = original.showInputBox;
+      w.createQuickPick = original.createQuickPick;
+      w.showQuickPick = original.showQuickPick;
+      await vscode.window.tabGroups.close(mosaicos());
+      srv.closeAllConnections();
+      srv.close();
     }
   });
 

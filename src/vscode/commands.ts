@@ -32,23 +32,74 @@ function defaultDevices(): string[] {
   return ids.length ? ids : FALLBACK_DEVICES;
 }
 
-async function pickTarget(): Promise<{ origin: string; path: string } | undefined> {
-  const found = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: t('ViewKeeper: looking for your dev server…') }, () => findDevServers(folder()));
-  if (found.length === 1) return { origin: found[0].origin, path: '/' };
-  if (found.length > 1) {
-    const pick = await vscode.window.showQuickPick(
-      found.map((f) => ({ label: f.origin, description: f.framework, origin: f.origin })),
-      { title: t('Which dev server?') },
-    );
-    return pick ? { origin: pick.origin, path: '/' } : undefined;
-  }
+type Target = { origin: string; path: string };
+
+/** Pide una dirección escrita a mano (también de producción): https://app.ejemplo.com/ruta, localhost:3000 o 3000. */
+async function askAddress(title: string, value?: string): Promise<Target | undefined> {
   const raw = await vscode.window.showInputBox({
-    title: t('No dev server found'),
-    prompt: t('Start your dev server, or type its URL or port.'),
+    title,
+    prompt: t('Type a URL or a port. It can be a deployed site: https://example.com/path'),
     placeHolder: 'http://localhost:5173',
+    value,
     validateInput: (v) => (normalizeTarget(v) ? undefined : t('Not a valid http(s) address.')),
   });
   return raw === undefined ? undefined : normalizeTarget(raw);
+}
+
+/**
+ * Lo que se abre al pulsar el botón: los servidores encontrados y, siempre, la opción de escribir otra dirección.
+ * Lo que se escribe en la lista, si es una dirección, aparece arriba para abrirla con Intro.
+ */
+async function pickTarget(): Promise<Target | undefined> {
+  const found = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: t('ViewKeeper: looking for your dev server…') }, () => findDevServers(folder()));
+  if (found.length === 0) return askAddress(t('No dev server found'));
+  type Item = vscode.QuickPickItem & { target?: Target; other?: true };
+  const base: Item[] = [
+    ...found.map((f) => ({ label: f.origin, description: f.framework, target: { origin: f.origin, path: '/' } })),
+    { label: t('Another address…'), description: t('URL or port, also a deployed site'), other: true, alwaysShow: true },
+  ];
+  const qp = vscode.window.createQuickPick<Item>();
+  qp.title = t('Open in ViewKeeper');
+  qp.placeholder = t('Pick your dev server or type an address (https://example.com/path)');
+  qp.items = base;
+  qp.onDidChangeValue((v) => {
+    const typed = normalizeTarget(v);
+    if (!typed) return void (qp.items = base);
+    // alwaysShow: si no, el filtro de la lista lo escondería al no coincidir con ninguna etiqueta. Arriba solo si
+    // lo escrito ya parece una dirección (puerto, punto, dos puntos o barra); una palabra suelta («localhost»,
+    // «intranet») va al final, para que escribir y pulsar Intro siga eligiendo el servidor que coincide.
+    const it: Item = { label: typed.origin + typed.path, description: t('Open this address'), target: typed, alwaysShow: true };
+    qp.items = /^\d{2,5}$|[.:/]/.test(v.trim()) ? [it, ...base] : [...base, it];
+  });
+  const chosen = await new Promise<Item | undefined>((resolve) => {
+    qp.onDidAccept(() => {
+      resolve(qp.selectedItems[0]);
+      qp.hide();
+    });
+    qp.onDidHide(() => resolve(undefined));
+    qp.show();
+  });
+  qp.dispose();
+  if (!chosen) return undefined;
+  if (chosen.other) return askAddress(t('Open in ViewKeeper'));
+  return chosen.target;
+}
+
+/** Abrir una dirección cualquiera, haya o no un mosaico abierto (lo sustituye, con sus dispositivos). */
+async function openUrl(ctx: vscode.ExtensionContext): Promise<void> {
+  if (remote()) return;
+  const now = current?.mosaic();
+  const rows = now ? [...new Set(now.cells.map((c) => c.group))].sort((a, b) => a - b) : [];
+  // Una fila: se propone la dirección con la ruta que enseña. Una matriz: solo el origen (cada fila tiene la suya).
+  const first = now?.cells.find((c) => c.group === rows[0]);
+  const target = await askAddress(t('Open in ViewKeeper'), now ? now.target + (rows.length === 1 && first ? first.path : '') : undefined);
+  if (!target) return;
+  const path = matrix([target.path], ['x'])[0].path;
+  // Mismos dispositivos, giros y sesiones que el mosaico abierto. En una matriz, si se escribe solo el origen,
+  // cada fila conserva su ruta; con una ruta escrita, todas las filas van a ella.
+  const keepRows = rows.length > 1 && path === '/';
+  const cells = now && now.cells.length > 0 ? now.cells.map((c) => (keepRows ? c : { ...c, path })) : matrix([target.path], defaultDevices());
+  await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells, sync: now?.sync ?? SYNC_ALL });
 }
 
 /** En una ventana remota dice por qué no y devuelve true. Se mira al empezar cada comando, antes de preguntar nada. */
@@ -278,6 +329,7 @@ export function registerCommands(ctx: vscode.ExtensionContext): void {
   };
   const reg = (id: string, fn: () => Promise<void> | void): void => void ctx.subscriptions.push(vscode.commands.registerCommand(id, wrap(fn)));
   reg('viewkeeper.open', () => openDefault(ctx));
+  reg('viewkeeper.openUrl', () => openUrl(ctx));
   reg('viewkeeper.openMatrix', () => openMatrix(ctx));
   reg('viewkeeper.addSession', () => addSessionCmd());
   reg('viewkeeper.save', () => save());

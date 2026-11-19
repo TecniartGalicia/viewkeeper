@@ -24,6 +24,7 @@ export interface CellView extends Cell {
 }
 export interface PanelText {
   tripped: string;
+  address: string;
   addDevice: string;
   sync: string;
   scroll: string;
@@ -89,6 +90,7 @@ const ICONS: Record<string, string> = {
   rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   chevron: '<path d="M4.5 6.5 8 10l3.5-3.5"/>',
+  globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11"/><path d="M8 2.5c1.6 1.6 2.3 3.5 2.3 5.5S9.6 11.9 8 13.5C6.4 11.9 5.7 10 5.7 8S6.4 4.1 8 2.5z"/>',
 };
 function icon(name: string): SVGSVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -147,6 +149,7 @@ function renderBar(s: PanelState): void {
   });
   const sep = (): HTMLElement => Object.assign(document.createElement('span'), { className: 'sep' });
   barEl.append(
+    withKey(button(s.text.address, 'globe', () => command('openUrl')), 'bar:openUrl'),
     add,
     sep(),
     label,

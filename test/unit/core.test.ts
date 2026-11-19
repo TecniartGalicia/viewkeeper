@@ -25,7 +25,8 @@ test('P-21 destino: se aceptan puerto, host y URL; se rechaza lo que no es http'
   assert.deepEqual(normalizeTarget('3000'), { origin: 'http://localhost:3000', path: '/' });
   assert.deepEqual(normalizeTarget('localhost:5173/app?x=1#y'), { origin: 'http://localhost:5173', path: '/app?x=1#y' });
   assert.deepEqual(normalizeTarget(' https://staging.example.com '), { origin: 'https://staging.example.com', path: '/' });
-  for (const bad of ['', 'file:///etc/passwd', 'javascript:alert(1)', 'ftp://x', 'http://user:pass@host', 'http://']) assert.equal(normalizeTarget(bad), undefined, bad);
+  assert.deepEqual(normalizeTarget('https://neurosinais.argalla.com/pacientes'), { origin: 'https://neurosinais.argalla.com', path: '/pacientes' });
+  for (const bad of ['', 'file:///etc/passwd', 'javascript:alert(1)', 'ftp://x', 'http://user:pass@host', 'http://', '/pacientes', '//pacientes']) assert.equal(normalizeTarget(bad), undefined, bad);
   assert.ok(isLoopback('http://localhost:3000') && isLoopback('http://127.0.0.1:1') && isLoopback('http://app.localhost'));
   assert.ok(!isLoopback('http://localhost.evil.com') && !isLoopback('https://example.com'));
 });

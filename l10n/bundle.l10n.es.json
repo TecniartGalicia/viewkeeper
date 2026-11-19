@@ -6,9 +6,7 @@
   "{0} capture(s) failed. Run \"ViewKeeper: Diagnose\" for details.": "{0} captura(s) fallaron. Ejecuta \"ViewKeeper: Diagnosticar\" para ver por qué.",
   "{0} captures saved.": "{0} capturas guardadas.",
   "ViewKeeper: looking for your dev server…": "ViewKeeper: buscando tu servidor de desarrollo…",
-  "Which dev server?": "¿Qué servidor de desarrollo?",
   "No dev server found": "No se encontró ningún servidor de desarrollo",
-  "Start your dev server, or type its URL or port.": "Arranca tu servidor de desarrollo, o escribe su dirección o su puerto.",
   "Not a valid http(s) address.": "No es una dirección http(s) válida.",
   "A mosaic holds up to {0} cells; the rest were left out.": "Un mosaico admite hasta {0} celdas; el resto se quedó fuera.",
   "Yes": "Sí",
@@ -58,5 +56,12 @@
   "your user settings": "tus ajustes de usuario",
   "Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper? It will be saved in \"viewkeeper.apiOrigins\" of {1}.": "Tu app llama a {0} y el navegador lo bloquea dentro del mosaico. ¿Lo paso por ViewKeeper? Se guardará en \"viewkeeper.apiOrigins\" de {1}.",
   "Add a device first.": "Añade antes un dispositivo.",
-  "The mosaic was closed during the capture.": "El mosaico se cerró durante la captura."
+  "The mosaic was closed during the capture.": "El mosaico se cerró durante la captura.",
+  "Type a URL or a port. It can be a deployed site: https://example.com/path": "Escribe una dirección o un puerto. Puede ser una web publicada: https://ejemplo.com/ruta",
+  "Another address…": "Otra dirección…",
+  "URL or port, also a deployed site": "Dirección o puerto, también de una web publicada",
+  "Open in ViewKeeper": "Abrir en ViewKeeper",
+  "Pick your dev server or type an address (https://example.com/path)": "Elige tu servidor de desarrollo o escribe una dirección (https://ejemplo.com/ruta)",
+  "Open this address": "Abrir esta dirección",
+  "Address": "Dirección"
 }

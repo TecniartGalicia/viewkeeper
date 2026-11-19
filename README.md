@@ -44,6 +44,7 @@ So ViewKeeper runs a small proxy on `127.0.0.1` between the views and your dev s
 - **Sign-in through another site** (Google, GitHub, Auth0 redirects) cannot happen inside a view: the panel only lets each view talk to your own dev server. Use a local test account.
 - **Local windows only, for now.** In a remote window (WSL, SSH, containers, Codespaces) the views cannot reach the proxy, and ViewKeeper says so instead of opening a blank panel.
 - **During the preview your app runs slightly differently**: without its Content-Security-Policy, with rewritten cookies, from another origin. That is fine for layout and behaviour; if you are debugging one of those three things, turn off `viewkeeper.relaxCsp` / `viewkeeper.fixCookies` or use a normal browser.
+- **A deployed site works too**, with care: every click and keystroke is repeated in every view, so with real data turn off click and typing sync or use a test account. Sign-in through another site does not work (see above), an API on another domain rejects the preview origin, and links written with the full domain leave the mosaic.
 - When two views have very different layouts, a click is only replayed if the element really is the same one (same tag, role, name, link). Otherwise that view simply does not follow, rather than pressing the wrong button.
 
 ## Commands
@@ -51,6 +52,7 @@ So ViewKeeper runs a small proxy on `127.0.0.1` between the views and your dev s
 | Command | |
 |---|---|
 | **ViewKeeper: Open mosaic for your dev server** | Also the status bar button |
+| **ViewKeeper: Open mosaic for a URL (local or deployed)…** | Any address with its path, also a deployed site; replaces the open mosaic. Also the **Address** button in the panel |
 | **ViewKeeper: Open route × device matrix** | Pick routes and devices |
 | **ViewKeeper: Add a cell with another session** | Same screen, another user |
 | **ViewKeeper: Save this mosaic to the project** / **Open a saved mosaic** | `.vscode/viewkeeper.json` |

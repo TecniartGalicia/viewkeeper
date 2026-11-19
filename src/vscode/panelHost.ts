@@ -40,12 +40,13 @@ interface FromPanel {
 }
 
 /** Botones de la barra que lanzan un comando de la extensión. Lo demás que pida el panel se ignora. */
-const PANEL_COMMANDS = new Set(['reload', 'capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor']);
+const PANEL_COMMANDS = new Set(['openUrl', 'reload','capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor']);
 
 function texts(): PanelText {
   const t = vscode.l10n.t;
   return {
     tripped: t('These cells kept sending each other to different pages, so navigation sync is paused for this row for 30 seconds. Reload the mosaic to resume now.'),
+    address: t('Address'),
     addDevice: t('Add device'),
     sync: t('Sync'),
     scroll: t('Scroll'),

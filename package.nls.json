@@ -1,5 +1,6 @@
 {
   "cmd.open": "Open mosaic for your dev server",
+  "cmd.openUrl": "Open mosaic for a URL (local or deployed)…",
   "cmd.openMatrix": "Open route × device matrix",
   "cmd.addSession": "Add a cell with another session",
   "cmd.save": "Save this mosaic to the project",

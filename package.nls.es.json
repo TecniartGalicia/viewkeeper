@@ -1,5 +1,6 @@
 {
   "cmd.open": "Abrir mosaico de tu servidor de desarrollo",
+  "cmd.openUrl": "Abrir mosaico de una dirección (local o publicada)…",
   "cmd.openMatrix": "Abrir matriz de rutas × dispositivos",
   "cmd.addSession": "Añadir una celda con otra sesión",
   "cmd.save": "Guardar este mosaico en el proyecto",

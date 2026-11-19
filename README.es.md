@@ -44,6 +44,7 @@ Así que ViewKeeper pone un proxy pequeño en `127.0.0.1` entre las vistas y tu 
 - **Iniciar sesión a través de otro sitio** (redirecciones a Google, GitHub, Auth0) no cabe en una vista: el panel solo deja hablar a cada vista con tu servidor. Usa una cuenta de prueba local.
 - **Por ahora, solo ventanas locales.** En una ventana remota (WSL, SSH, contenedores, Codespaces) las vistas no llegan al proxy, y ViewKeeper lo dice en vez de abrir un panel en blanco.
 - **Durante la vista previa tu app corre algo distinta**: sin su Content-Security-Policy, con las cookies reescritas y desde otro origen. Para maquetar y probar comportamiento da igual; si estás depurando justo una de esas tres cosas, apaga `viewkeeper.relaxCsp` / `viewkeeper.fixCookies` o usa un navegador normal.
+- **También sirve con una web publicada**, con cuidado: cada clic y cada tecla se repiten en todas las vistas, así que con datos reales apaga la sincronización de clics y escritura o usa una cuenta de pruebas. El inicio de sesión a través de otro sitio no funciona (ver arriba), una API en otro dominio rechaza el origen de la vista previa, y los enlaces escritos con el dominio completo salen del mosaico.
 - Cuando dos vistas tienen maquetaciones muy distintas, un clic solo se repite si el elemento es de verdad el mismo (misma etiqueta, rol, nombre, enlace). Si no, esa vista no te sigue, antes que pulsar otro botón.
 
 ## Comandos
@@ -51,6 +52,7 @@ Así que ViewKeeper pone un proxy pequeño en `127.0.0.1` entre las vistas y tu 
 | Comando | |
 |---|---|
 | **ViewKeeper: Abrir mosaico de tu servidor de desarrollo** | También el botón de la barra de estado |
+| **ViewKeeper: Abrir mosaico de una dirección (local o publicada)…** | Cualquier dirección con su ruta, también una web publicada; sustituye el mosaico abierto. También el botón **Dirección** del panel |
 | **ViewKeeper: Abrir matriz de rutas × dispositivos** | Eliges rutas y dispositivos |
 | **ViewKeeper: Añadir una celda con otra sesión** | La misma pantalla, otro usuario |
 | **ViewKeeper: Guardar este mosaico en el proyecto** / **Abrir un mosaico guardado** | `.vscode/viewkeeper.json` |
