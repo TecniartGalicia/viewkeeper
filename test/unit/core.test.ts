@@ -1,7 +1,7 @@
 // Pruebas del núcleo puro: dispositivos, modelo, reparto de eventos, rutas, puertos y captura.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEVICES, findDevice, fitScale, parseCustomDevice, rotate } from '../../src/core/devices.ts';
+import { DEVICES, findDevice, fitScale, parseCustomDevice, rotate, rowScales } from '../../src/core/devices.ts';
 import { MAX_CELLS, SYNC_ALL, addSession, applyEdit, capCells, isLoopback, matrix, normalizeTarget, parseMosaic, type Cell } from '../../src/core/mosaic.ts';
 import { SyncRouter, pageKey } from '../../src/core/sync.ts';
 import { detectRoutes, fillRoute } from '../../src/core/routes.ts';
@@ -331,4 +331,21 @@ test('P-36 navegación tras un clic reproducido: la seguidora tiene margen para 
   reloj.t += 5000;
   r.route('a', { t: 'gesture' });
   assert.deepEqual(r.route('a', { t: 'nav', url: U('/otra') }), [nav('b', '/otra'), nav('c', '/otra')]);
+});
+
+test('P-37 colocación por filas: misma altura, cabe en el ancho, nunca amplía', () => {
+  const [p, t, l] = [findDevice('iphone-15')!, findDevice('ipad-mini')!, findDevice('laptop')!];
+  const s = rowScales([p, t, l], 1100, 600, 14);
+  const alturas = [p, t, l].map((d, i) => Math.round(d.height * s[i]));
+  assert.ok(Math.max(...alturas) - Math.min(...alturas) <= 2, `misma altura: ${alturas}`);
+  const ancho = [p, t, l].reduce((sum, d, i) => sum + Math.max(190, d.width * s[i]), 0) + 28;
+  assert.ok(ancho <= 1100.5, `cabe: ${ancho}`);
+  assert.ok(ancho > 1050, `y aprovecha el ancho: ${ancho}`);
+  // Con sitio de sobra, nada pasa del 100 %.
+  assert.deepEqual(rowScales([p], 5000, 5000, 14), [1]);
+  // Una celda sola y estrecha llena el alto disponible.
+  assert.equal(Math.round(p.height * rowScales([p], 2000, 400, 14)[0]), 400);
+  // Muchas celdas en poco ancho: el mínimo de 190 px manda y la altura baja hasta el suelo, sin romperse.
+  assert.equal(rowScales(Array(12).fill(l), 300, 600, 14).length, 12);
+  assert.deepEqual(rowScales([], 1000, 1000, 14), []);
 });

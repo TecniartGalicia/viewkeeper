@@ -2,7 +2,11 @@
 // y hace de centralita entre agentes.
 // Lo que se escribe en una celda (contraseñas incluidas) se reparte aquí, en memoria, y NUNCA se manda
 // al host de la extensión: hacia allí solo salen ruta, métricas numéricas, ediciones y avisos sin contenido.
-import { fitScale } from '../core/devices.ts';
+import { rowScales } from '../core/devices.ts';
+
+/** Separación entre celdas y ancho mínimo de una celda (su rótulo tiene que caber): los mismos que en el CSS. */
+const GAP = 14;
+const MIN_CELL = 230;
 import type { Cell, Edit, SyncOptions } from '../core/mosaic.ts';
 import { REARM_MS, SyncRouter, pathOf, type AgentCommand, type AgentEvent } from '../core/sync.ts';
 
@@ -171,7 +175,7 @@ function caption(c: CellView, fig: HTMLElement): void {
   const s = state as PanelState;
   const cap = document.createElement('figcaption');
   const sel = deviceSelect(c.deviceId, undefined, (id) => edit({ op: 'device', cell: c.id, deviceId: id }));
-  sel.title = c.label;
+  sel.title = `${c.label} · ${c.width}×${c.height}`;
   const dim = document.createElement('span');
   dim.className = 'dim';
   dim.textContent = `${c.width}×${c.height}`;
@@ -187,7 +191,11 @@ function caption(c: CellView, fig: HTMLElement): void {
     ses.textContent = `${s.text.session1}: ${c.session}`;
     cap.append(ses);
   }
-  cap.append(where, button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }));
+  // Girar y quitar, juntos y a la derecha.
+  const acc = document.createElement('span');
+  acc.className = 'acc';
+  acc.append(button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }));
+  cap.append(where, acc);
   fig.querySelector('figcaption')?.remove();
   fig.prepend(cap);
 }
@@ -213,22 +221,27 @@ function layout(): void {
   const rows = new Map<number, CellView[]>();
   for (const c of state.cells) rows.set(c.group, [...(rows.get(c.group) ?? []), c]);
   const top = barEl.getBoundingClientRect().height;
-  const availH = Math.max(160, (window.innerHeight - top) / Math.max(1, rows.size) - 52);
+  // Alto de cada fila: el de la ventana repartido entre filas, menos el rótulo de las celdas.
+  const availH = Math.max(160, (window.innerHeight - top - 24) / Math.max(1, rows.size) - 56);
+  const availW = Math.max(200, rootEl.clientWidth - 26);
   for (const row of rows.values()) {
-    const availW = Math.max(120, (rootEl.clientWidth - 24 - 14 * (row.length - 1)) / row.length);
-    for (const c of row) {
+    const scales = rowScales(row, availW, availH, GAP, MIN_CELL);
+    row.forEach((c, i) => {
       const l = live.get(c.id);
-      if (!l) continue;
+      if (!l) return;
       const stage = l.frame.parentElement as HTMLElement;
-      const s = fitScale(c, availW, availH);
+      const s = scales[i];
       l.frame.width = String(c.width);
       l.frame.height = String(c.height);
       l.frame.style.transform = `scale(${s})`;
       stage.style.width = `${Math.round(c.width * s)}px`;
       stage.style.height = `${Math.round(c.height * s)}px`;
+      // En una celda estrecha el rótulo se compacta (sin medidas) para no partirse en dos líneas.
+      l.fig.classList.toggle('estrecha', c.width * s < 320);
+      l.fig.style.width = `${Math.max(MIN_CELL, Math.round(c.width * s))}px`;
       const pct = l.fig.querySelector('.pct');
       if (pct) pct.textContent = `${Math.round(s * 100)} %`;
-    }
+    });
   }
 }
 

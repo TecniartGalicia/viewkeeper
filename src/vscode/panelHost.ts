@@ -277,10 +277,13 @@ const CSS = `
   .aviso { flex-basis: 100%; margin: 0; padding: 6px 10px; border-radius: 4px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); }
   .vacio { padding: 40px 12px; text-align: center; opacity: .8; }
   figure { margin: 0; flex: none; }
-  figcaption { display: flex; align-items: center; gap: 4px; padding: 0 0 6px; white-space: nowrap; }
-  figcaption select { padding: 1px 4px; max-width: 150px; }
+  figcaption { display: flex; align-items: center; gap: 4px; padding: 0 0 6px; white-space: nowrap; min-height: 26px; }
+  figcaption select { padding: 1px 4px; max-width: 150px; flex: none; }
+  figure.estrecha .dim { display: none; }
+  figure.estrecha figcaption select { max-width: 112px; }
+  figcaption .acc { margin-left: auto; display: inline-flex; }
   figcaption .dim { opacity: .7; }
-  figcaption .ruta { opacity: .85; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  figcaption .ruta { opacity: .85; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; max-width: 220px; }
   figcaption .ses { font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
   .escena { overflow: hidden; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: #fff; }
   iframe { border: 0; transform-origin: 0 0; display: block; background: #fff; }

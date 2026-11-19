@@ -59,3 +59,26 @@ export function fitScale(d: Pick<Device, 'width' | 'height'>, boxW: number, boxH
   const s = Math.min(boxW / d.width, boxH / d.height, 1);
   return Math.max(0.1, Math.round(s * 1000) / 1000);
 }
+
+/**
+ * Escalas de una fila del mosaico: todas las celdas a la MISMA altura en pantalla, la mayor que quepa en el
+ * ancho disponible, sin ampliar ninguna por encima del 100 %. Cada celda ocupa al menos `minWidth` (su rótulo
+ * tiene que caber). Así un portátil no se queda diminuto al lado de un móvil, y se comparan a la misma altura.
+ */
+export function rowScales(sizes: readonly Pick<Device, 'width' | 'height'>[], availW: number, availH: number, gap: number, minWidth = 190): number[] {
+  if (sizes.length === 0) return [];
+  const room = Math.max(1, availW - gap * (sizes.length - 1));
+  const used = (h: number): number => sizes.reduce((sum, d) => sum + Math.max(minWidth, d.width * Math.min(h / d.height, 1)), 0);
+  // La anchura ocupada crece con la altura: búsqueda binaria de la mayor altura que cabe.
+  let lo = 40;
+  let hi = Math.max(lo, availH);
+  if (used(hi) <= room) lo = hi;
+  else {
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (used(mid) <= room) lo = mid;
+      else hi = mid;
+    }
+  }
+  return sizes.map((d) => Math.max(0.05, Math.round(Math.min(lo / d.height, 1) * 1000) / 1000));
+}

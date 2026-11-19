@@ -9,6 +9,7 @@ import { SYNC_ALL } from '../../src/core/mosaic.ts';
 import type { PanelHost } from '../../src/vscode/panelHost.ts';
 import { startUpstream } from '../fixtures/upstream.ts';
 import { pruebas } from './pruebas.ts';
+import { demo } from './demo.ts';
 
 export let SONDA = { inicio: '', pregunta: '' };
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -196,6 +197,10 @@ export async function run(): Promise<void> {
     const dir = path.join(ext.extensionPath, 'test', 'sonda');
     SONDA = { inicio: fs.readFileSync(path.join(dir, 'inicio.js'), 'utf8'), pregunta: fs.readFileSync(path.join(dir, 'pregunta.js'), 'utf8') };
     const solo = process.env.VK_SOLO ?? '';
+    if (solo === 'demo' || solo === 'foto') {
+      await demo(api, solo);
+      return;
+    }
     if (solo === 't') {
       // Suite de integración: afirmaciones, no medidas. El lanzador (run.ts) lee el resultado y decide.
       res.pruebas = await pruebas(api, ext);
