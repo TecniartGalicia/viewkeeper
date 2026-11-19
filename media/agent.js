@@ -1,7 +1,7 @@
 // Agente de ViewKeeper. Lo inyecta el proxy en cada documento HTML y corre DENTRO de la página del usuario.
 // Reglas: ES2017 sin dependencias; no toca nada si no está en una celda; solo habla con el origen del panel,
-// que el proxy le da incrustado (__VK_PANEL) y que la página no puede cambiar; y nunca envía contenido de la
-// página: solo eventos de interacción y métricas.
+// que el proxy le da incrustado (__VK_PANEL) y que la página no puede cambiar; y al panel solo le manda eventos
+// de interacción, métricas y el mensaje de los errores de JavaScript (que el panel no pasa al host).
 (function () {
   'use strict';
   var PANEL = typeof __VK_PANEL === 'string' ? __VK_PANEL : '';
@@ -80,6 +80,39 @@
   hintFn = function (u) {
     try { var o = new URL(String(u), location.href).origin; if (!hinted[o]) { hinted[o] = true; send({ t: 'hint', kind: 'api', origin: o }); } } catch (e) { /* nada */ }
   };
+
+  // ── errores de la página: para ver de un vistazo que «en el móvil falla y en el escritorio no».
+  // El agente se carga antes que los scripts de la página, así que oye también los de arranque. El texto
+  // se queda en el panel, que lo enseña en el rótulo de la celda; al host solo llega la cuenta.
+  var errs = 0;
+  function report(kind, msg) {
+    if (errs >= 50) return; // una página en bucle de errores no inunda el panel
+    errs++;
+    var text = '';
+    try { text = String(msg == null ? '' : msg).slice(0, 300); } catch (e) { text = '?'; }
+    send({ t: 'error', kind: kind, msg: text });
+  }
+  window.addEventListener('error', function (ev) {
+    // Solo errores de JavaScript: una imagen que no carga llega con otro destino y sin mensaje.
+    if (ev.target !== window || typeof ev.message !== 'string') return;
+    var where = ev.filename ? ' (' + String(ev.filename).split('/').pop().split('?')[0] + ':' + ev.lineno + ')' : '';
+    report('error', ev.message + where);
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev.reason;
+    report('rejection', r && r.message ? r.message : r);
+  });
+  if (window.console && typeof console.error === 'function') {
+    var realConsoleError = console.error;
+    console.error = function () {
+      try {
+        report('console', Array.prototype.map.call(arguments, function (a) {
+          return typeof a === 'string' ? a : a && a.message ? a.message : Object.prototype.toString.call(a);
+        }).join(' '));
+      } catch (e) { /* un argumento que no se deja leer */ }
+      return realConsoleError.apply(console, arguments);
+    };
+  }
 
   // ── emulación por celda, del lado del cliente (lo que un iframe sí permite)
   function define(obj, prop, value) {

@@ -72,7 +72,7 @@
     "lint": "eslint src test media/agent.js",
     "l10n": "node scripts/l10n-sync.mjs",
     "test": "node --no-warnings --test \"test/unit/*.test.ts\"",
-    "test:browser": "node --no-warnings test/browser/r1-proxy.ts && node --no-warnings test/browser/r2-sync.ts && node --no-warnings test/browser/r4-navegador.ts",
+    "test:browser": "node --no-warnings test/browser/r1-proxy.ts && node --no-warnings test/browser/r2-sync.ts && node --no-warnings test/browser/r4-navegador.ts && node --no-warnings test/browser/r5-mejoras.ts",
     "test:integration": "npm run build && node esbuild.mjs --tests && node --no-warnings test/integration/run.ts",
     "package": "vsce package --no-dependencies",
     "check": "npm run typecheck && npm run check:agent && npm run lint && npm run l10n && npm test"
@@ -131,6 +131,11 @@
       {
         "command": "viewkeeper.doctor",
         "title": "%cmd.doctor%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.toggleFollowEditor",
+        "title": "%cmd.toggleFollowEditor%",
         "category": "ViewKeeper"
       }
     ],
@@ -229,6 +234,11 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "%cfg.apiOrigins%"
+        },
+        "viewkeeper.followEditor": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%cfg.followEditor%"
         },
         "viewkeeper.relaxCsp": {
           "type": "boolean",

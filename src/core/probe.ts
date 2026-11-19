@@ -43,17 +43,34 @@ export async function resolveTarget(origin: string, path: string, timeoutMs = 25
   return { origin: at.origin, path: at.pathname + at.search + at.hash, hops };
 }
 
-/** El Location de una respuesta 3xx, o undefined si no redirige o no contesta. No lee el cuerpo. */
-function redirectOf(u: URL, timeoutMs: number): Promise<string | undefined> {
+/** ¿Contesta algo por HTTP en ese origen? Cualquier respuesta vale (también un 404 o un 500): hay servidor. */
+export async function answers(origin: string, timeoutMs = 700): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  return (await ask(u, timeoutMs)) !== undefined;
+}
+
+/** El Location de una respuesta 3xx, o undefined si no redirige o no contesta. */
+async function redirectOf(u: URL, timeoutMs: number): Promise<string | undefined> {
+  const r = await ask(u, timeoutMs);
+  return r && r.status >= 300 && r.status < 400 ? r.location : undefined;
+}
+
+/** GET sin leer el cuerpo. Un certificado autofirmado solo se tolera contra la propia máquina. */
+function ask(u: URL, timeoutMs: number): Promise<{ status: number; location: string | undefined } | undefined> {
   return new Promise((resolve) => {
     const secure = u.protocol === 'https:';
     const req = (secure ? https : http).request(
-      { protocol: u.protocol, hostname: u.hostname.replace(/^\[|\]$/g, ''), port: u.port || (secure ? 443 : 80), path: u.pathname + u.search, method: 'GET', timeout: timeoutMs, headers: { accept: 'text/html', 'user-agent': 'ViewKeeper' } },
+      { protocol: u.protocol, hostname: u.hostname.replace(/^\[|\]$/g, ''), port: u.port || (secure ? 443 : 80), path: u.pathname + u.search, method: 'GET', timeout: timeoutMs, headers: { accept: 'text/html', 'user-agent': 'ViewKeeper' }, rejectUnauthorized: !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname) },
       (res) => {
-        const s = res.statusCode ?? 0;
         const loc = res.headers.location;
         res.destroy();
-        resolve(s >= 300 && s < 400 && typeof loc === 'string' ? loc : undefined);
+        resolve({ status: res.statusCode ?? 0, location: typeof loc === 'string' ? loc : undefined });
       },
     );
     req.on('timeout', () => {

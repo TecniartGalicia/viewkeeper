@@ -221,3 +221,105 @@ test('P-61 abrir: desarrollo tal cual; web publicada en su dominio principal y c
   assert.equal(mala.mosaic.target, 'https://example.org');
   assert.equal(mala.redirectedFrom, undefined);
 });
+
+// ───────────────────────── Fase B
+
+test('P-62 mandar una fila a otra ruta: va toda la fila, la llegada no rebota y una celda nueva entra ya en ella', async () => {
+  const { SyncRouter } = await import('../../src/core/sync.ts');
+  let t = 1000;
+  const c = (id: string, group: number) => ({ id, deviceId: 'laptop', landscape: false, path: '/', session: 'main', group });
+  const cells = [c('a', 0), c('b', 0), c('z', 1)];
+  const r = new SyncRouter(cells, SYNC_ALL, () => t);
+  const at = (id: string, path: string, kind: 'hello' | 'ready' = 'hello') => r.route(id, kind === 'hello' ? { t: 'hello', url: 'http://x' + path } : { t: 'ready', url: 'http://x' + path, title: '', height: 1 });
+  for (const id of ['a', 'b', 'z']) at(id, '/');
+  // Un gesto pendiente en «a»: la orden lo gasta, para que la llegada no cuente como navegación del usuario.
+  r.route('a', { t: 'gesture' });
+  assert.deepEqual(r.drive(0, '/precios'), [
+    { to: 'a', cmd: { t: 'nav', path: '/precios' } },
+    { to: 'b', cmd: { t: 'nav', path: '/precios' } },
+  ]);
+  // Llegan: ni «a» manda a «b» ni al revés, y la otra fila no se entera.
+  t += 200;
+  assert.deepEqual(at('a', '/precios'), []);
+  assert.deepEqual(at('a', '/precios', 'ready'), []);
+  assert.deepEqual(at('b', '/precios'), []);
+  assert.deepEqual(at('b', '/precios', 'ready'), []);
+  assert.equal(r.currentPath('z'), '/');
+  // Quien ya está en la ruta no recibe orden; a una fila que no existe, nada.
+  assert.deepEqual(r.drive(0, '/precios/'), []);
+  assert.deepEqual(r.drive(7, '/x'), []);
+  // Una celda que se añade después a esa fila y carga en la ruta vieja: se la pone al día.
+  r.update([...cells, c('n', 0)], SYNC_ALL);
+  assert.deepEqual(at('n', '/'), [{ to: 'n', cmd: { t: 'nav', path: '/precios' } }]);
+  at('n', '/precios');
+  at('n', '/precios', 'ready');
+  // Y la navegación del usuario sigue repartiéndose como siempre.
+  t += 20_000;
+  r.route('a', { t: 'gesture' });
+  assert.deepEqual(
+    at('a', '/carrito').map((d) => d.to),
+    ['b', 'n'],
+  );
+  // Con la navegación apagada, la orden del usuario se cumple igual: no es una celda arrastrando a otra.
+  const off = new SyncRouter([c('a', 0), c('b', 0)], { ...SYNC_ALL, nav: false }, () => t);
+  off.route('a', { t: 'hello', url: 'http://x/' });
+  off.route('b', { t: 'hello', url: 'http://x/' });
+  assert.equal(off.drive(0, '/x').length, 2);
+});
+
+test('P-63 del fichero abierto a su ruta, también en un monorepo; y si una ruta concreta es de una dinámica', async () => {
+  const { routeForFile, matchesRoute } = await import('../../src/core/routes.ts');
+  const ruta = (f: string): string | undefined => routeForFile(f)?.path;
+  assert.equal(ruta('app/precios/page.tsx'), '/precios');
+  assert.equal(ruta('src/app/(tienda)/carrito/page.tsx'), '/carrito');
+  assert.equal(ruta('apps/web/app/precios/page.tsx'), '/precios');
+  assert.equal(ruta('apps\\web\\src\\routes\\about\\+page.svelte'), '/about');
+  assert.equal(ruta('packages/sitio/src/pages/blog/index.astro'), '/blog');
+  assert.equal(ruta('pages/contacto.vue'), '/contacto');
+  assert.equal(ruta('index.html'), '/');
+  assert.equal(ruta('apps/web/public/aviso.html'), '/aviso.html');
+  assert.deepEqual(routeForFile('app/blog/[slug]/page.tsx'), { path: '/blog/[slug]', dynamic: true, source: 'app/blog/[slug]/page.tsx' });
+  // Lo que no es una página no lleva a ningún sitio.
+  for (const no of ['app/precios/Tabla.tsx', 'app/layout.tsx', 'src/lib/util.ts', 'README.md', 'docs/notas/apunte.html', 'node_modules/x/app/page.tsx', 'pages/api/hola.ts', '.next/server/app/page.js']) assert.equal(ruta(no), undefined, no);
+
+  assert.equal(matchesRoute('/blog/[slug]', '/blog/hola'), true);
+  assert.equal(matchesRoute('/blog/[slug]', '/blog/hola/?x=1#y'), true);
+  assert.equal(matchesRoute('/blog/[slug]', '/blog'), false);
+  assert.equal(matchesRoute('/blog/[slug]', '/blog/a/b'), false);
+  assert.equal(matchesRoute('/blog/[slug]', '/tienda/hola'), false);
+  assert.equal(matchesRoute('/docs/[...resto]', '/docs/a/b/c'), true);
+  assert.equal(matchesRoute('/docs/[...resto]', '/docs'), false);
+  assert.equal(matchesRoute('/docs/[[...resto]]', '/docs'), true);
+  assert.equal(matchesRoute('/u/:id/perfil', '/u/7/perfil'), true);
+  assert.equal(matchesRoute('/', '/'), true);
+  assert.equal(matchesRoute('/', '/x'), false);
+});
+
+test('P-64 añadir un dispositivo a una fila concreta: entra en esa fila, con su ruta y su sesión', async () => {
+  const { applyEdit } = await import('../../src/core/mosaic.ts');
+  const c = (id: string, group: number, path: string, session = 'main') => ({ id, deviceId: 'laptop', landscape: false, path, session, group });
+  const m = { v: 1 as const, name: 'm', target: 'http://localhost:3000', cells: [c('r0c0', 0, '/'), c('r1c0', 1, '/carrito', 'admin')], sync: SYNC_ALL };
+  const known = (id: string): boolean => id === 'laptop' || id === 'iphone-15';
+  const fila1 = applyEdit(m, { op: 'add', deviceId: 'iphone-15', group: 1 }, known).cells.at(-1);
+  assert.deepEqual(fila1, { id: 'c0', deviceId: 'iphone-15', landscape: false, path: '/carrito', session: 'admin', group: 1, locale: undefined });
+  // Sin fila (el botón de la barra): a la primera, como hasta ahora.
+  assert.equal(applyEdit(m, { op: 'add', deviceId: 'iphone-15' }, known).cells.at(-1)?.group, 0);
+  // Una fila que no existe o que no es un número: el mensaje viene del webview, no se cree a ciegas.
+  assert.equal(applyEdit(m, { op: 'add', deviceId: 'iphone-15', group: 5 }, known).cells.at(-1)?.group, 0);
+  assert.equal(applyEdit(m, { op: 'add', deviceId: 'iphone-15', group: 'x' }, known).cells.at(-1)?.group, 0);
+  assert.equal(applyEdit(m, { op: 'add', deviceId: 'iphone-15', group: -1 }, known).cells.at(-1)?.group, 0);
+});
+
+test('P-65 ¿hay alguien en ese origen? cualquier respuesta cuenta; un puerto vacío, no', async () => {
+  const { answers } = await import('../../src/core/probe.ts');
+  const srv = await fake((_req, res) => void res.writeHead(500).end('roto, pero vivo'));
+  try {
+    assert.equal(await answers(srv.origin), true);
+    assert.equal(await answers(`http://127.0.0.1:${srv.port}`), true);
+  } finally {
+    await srv.close();
+  }
+  assert.equal(await answers(srv.origin, 500), false);
+  assert.equal(await answers('ftp://localhost'), false);
+  assert.equal(await answers('no es una url'), false);
+});

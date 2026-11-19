@@ -1,10 +1,12 @@
 // Casos de uso de la extensión. Cada comando envuelto en `wrap`: un fallo se enseña, no se traga.
 import * as vscode from 'vscode';
 import { DEVICES, parseCustomDevice, type Device } from '../core/devices.ts';
-import { MAX_CELLS, SYNC_ALL, addSession, capCells, isDevHost, isLoopback, isValidSession, matrix, normalizeTarget, type Mosaic } from '../core/mosaic.ts';
+import { MAX_CELLS, SYNC_ALL, addSession, capCells, isDevHost, isLoopback, isValidSession, matrix, normalizeTarget, parseMosaic, type Mosaic } from '../core/mosaic.ts';
 import { prepareOpen } from '../core/open.ts';
-import { resolveTarget } from '../core/probe.ts';
-import { detectRoutes, fillRoute } from '../core/routes.ts';
+import { answers, resolveTarget } from '../core/probe.ts';
+import { fillRoute, matchesRoute, routeForFile } from '../core/routes.ts';
+import { pageKey } from '../core/sync.ts';
+import { projectRoutes } from './projectRoutes.ts';
 import { captureMosaic } from './captureFlow.ts';
 import { apiTrustsApp, findDevServers } from './detect.ts';
 import { PanelHost } from './panelHost.ts';
@@ -36,6 +38,44 @@ function defaultDevices(): string[] {
 
 type Target = { origin: string; path: string };
 
+/** El último mosaico de este proyecto, tal como quedó. Vive en el almacén del área de trabajo, no en git. */
+const LAST_KEY = 'viewkeeper.lastMosaic';
+
+function remember(ctx: vscode.ExtensionContext, host: PanelHost): void {
+  const m = host.mosaic();
+  if (m.cells.length === 0) return;
+  // Sin consulta ni ancla, como al guardar: pueden llevar un testigo o un dato personal.
+  void ctx.workspaceState.update(LAST_KEY, { ...m, cells: m.cells.map((c) => ({ ...c, path: c.path.split(/[?#]/)[0] || '/' })) });
+}
+
+function lastMosaic(ctx: vscode.ExtensionContext): Mosaic | undefined {
+  return parseMosaic(ctx.workspaceState.get(LAST_KEY));
+}
+
+function followOn(): boolean {
+  return vscode.workspace.getConfiguration('viewkeeper').get<boolean>('followEditor') === true;
+}
+
+/**
+ * El mosaico sigue al editor: al abrir el fichero de una página, la fila va a su ruta. Solo con una fila
+ * (en una matriz cada fila es una ruta fija) y solo a rutas sin segmentos dinámicos: sin un valor para
+ * «[id]» no hay adónde ir, y si la fila ya enseña una página de esa ruta se queda donde está.
+ */
+function followEditor(ed: vscode.TextEditor | undefined): void {
+  const host = current;
+  if (!host || !ed || !followOn() || !vscode.workspace.getWorkspaceFolder(ed.document.uri)) return;
+  const rows = host.groups();
+  if (rows.length !== 1) return;
+  const route = routeForFile(vscode.workspace.asRelativePath(ed.document.uri, false));
+  if (!route) return;
+  const now = host.pathOfGroup(rows[0]) ?? '/';
+  if (route.dynamic || pageKey(route.path) === pageKey(now.split(/[?#]/)[0] || '/')) {
+    if (route.dynamic && !matchesRoute(route.path, now)) out.info(`follow editor: ${route.path} needs a value, staying on ${now.split(/[?#]/)[0]}`);
+    return;
+  }
+  host.drive(rows[0], route.path);
+}
+
 /** Pide una dirección escrita a mano (también de producción): https://app.ejemplo.com/ruta, localhost:3000 o 3000. */
 async function askAddress(title: string, value?: string): Promise<Target | undefined> {
   const raw = await vscode.window.showInputBox({
@@ -52,11 +92,15 @@ async function askAddress(title: string, value?: string): Promise<Target | undef
  * Lo que se abre al pulsar el botón: los servidores encontrados y, siempre, la opción de escribir otra dirección.
  * Lo que se escribe en la lista, si es una dirección, aparece arriba para abrirla con Intro.
  */
-async function pickTarget(): Promise<Target | undefined> {
+async function pickTarget(): Promise<Target | undefined>;
+async function pickTarget(reopen: Mosaic | undefined): Promise<Target | Mosaic | undefined>;
+async function pickTarget(reopen?: Mosaic): Promise<Target | Mosaic | undefined> {
   const found = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: t('ViewKeeper: looking for your dev server…') }, () => findDevServers(folder()));
-  if (found.length === 0) return askAddress(t('No dev server found'));
-  type Item = vscode.QuickPickItem & { target?: Target; other?: true };
+  if (found.length === 0 && !reopen) return askAddress(t('No dev server found'));
+  type Item = vscode.QuickPickItem & { target?: Target; other?: true; mosaic?: Mosaic };
   const base: Item[] = [
+    // Lo último que hubo abierto en este proyecto, con sus dispositivos y sus rutas.
+    ...(reopen ? [{ label: t('Reopen {0}', reopen.name), description: `${reopen.cells.length} · ${reopen.target}`, mosaic: reopen }] : []),
     ...found.map((f) => ({ label: f.origin, description: f.framework, target: { origin: f.origin, path: '/' } })),
     { label: t('Another address…'), description: t('URL or port, also a deployed site'), other: true, alwaysShow: true },
   ];
@@ -84,7 +128,7 @@ async function pickTarget(): Promise<Target | undefined> {
   qp.dispose();
   if (!chosen) return undefined;
   if (chosen.other) return askAddress(t('Open in ViewKeeper'));
-  return chosen.target;
+  return chosen.mosaic ?? chosen.target;
 }
 
 /** Abrir una dirección cualquiera, haya o no un mosaico abierto (lo sustituye, con sus dispositivos). */
@@ -146,10 +190,22 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true):
     log: (l) => out.info(l),
     proxy: { relaxCsp: cfg.get<boolean>('relaxCsp') !== false, fixCookies: cfg.get<boolean>('fixCookies') !== false, apiOrigins: trusted },
     onHint: (origin) => void offerApi(ctx, origin),
+    routes: () => projectRoutes(folder()),
+    follow: followOn,
   });
   const host = current;
+  // Se recuerda cómo queda: al abrirlo, cada vez que cambia de forma y, con un respiro, cuando una celda navega.
+  remember(ctx, host);
+  let moving: ReturnType<typeof setTimeout> | undefined;
+  host.onDidChange(() => remember(ctx, host));
+  host.onDidMove(() => {
+    clearTimeout(moving);
+    moving = setTimeout(() => remember(ctx, host), 1000);
+  });
   out.info(`mosaic open: ${next.target}, ${next.cells.length} cells, proxy on port ${host.proxy.port}`);
   host.panel.onDidDispose(() => {
+    clearTimeout(moving);
+    remember(ctx, host);
     if (current === host) current = undefined;
     void vscode.commands.executeCommand('setContext', 'viewkeeper.open', current !== undefined);
   });
@@ -189,9 +245,14 @@ async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
     current.panel.reveal();
     return;
   }
-  const target = await pickTarget();
-  if (!target) return;
-  await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells: matrix([target.path], defaultDevices()), sync: SYNC_ALL });
+  // Lo último que tenías en este proyecto, si su servidor de desarrollo sigue en marcha: se reabre sin preguntar.
+  // Una web publicada, o un servidor que ya no contesta, se ofrece en la lista en vez de abrirse sola.
+  const last = lastMosaic(ctx);
+  if (last && isDevHost(last.target) && (await answers(last.target))) return show(ctx, last);
+  const picked = await pickTarget(last);
+  if (!picked) return;
+  if ('cells' in picked) return show(ctx, picked);
+  await show(ctx, { v: 1, name: new URL(picked.origin).host, target: picked.origin, cells: matrix([picked.path], defaultDevices()), sync: SYNC_ALL });
 }
 
 /** Elegir rutas del proyecto y dispositivos, y abrir la matriz: una fila por ruta, una columna por dispositivo. */
@@ -199,12 +260,7 @@ async function openMatrix(ctx: vscode.ExtensionContext): Promise<void> {
   if (remote()) return;
   const target = current ? { origin: current.mosaic().target, path: '/' } : await pickTarget();
   if (!target) return;
-  const base = folder();
-  let routes: ReturnType<typeof detectRoutes> = [];
-  if (base) {
-    const files = await vscode.workspace.findFiles('**/*.{tsx,jsx,ts,js,mdx,md,svelte,astro,vue,html}', '**/{node_modules,dist,build,out,.next,.svelte-kit,.astro,.nuxt,.output,coverage}/**', 4000);
-    routes = detectRoutes(files.map((f) => vscode.workspace.asRelativePath(f, false)));
-  }
+  const routes = await projectRoutes(folder());
   const other = t('Type a route…');
   const picked = await vscode.window.showQuickPick(
     [
@@ -361,6 +417,23 @@ export function registerCommands(ctx: vscode.ExtensionContext): void {
     if (current) await captureMosaic(current, true, (l) => out.info(l));
   });
   reg('viewkeeper.doctor', doctor);
+  reg('viewkeeper.toggleFollowEditor', async () => {
+    await vscode.workspace.getConfiguration('viewkeeper').update('followEditor', !followOn(), vscode.ConfigurationTarget.Global);
+    // Recién encendido: el fichero que ya está abierto cuenta.
+    followEditor(vscode.window.activeTextEditor);
+  });
+  let following: ReturnType<typeof setTimeout> | undefined;
+  ctx.subscriptions.push(
+    // Con un respiro: al pasar por varias pestañas seguidas solo cuenta en la que te quedas.
+    vscode.window.onDidChangeActiveTextEditor((ed) => {
+      clearTimeout(following);
+      following = setTimeout(() => followEditor(ed), 250);
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('viewkeeper.followEditor')) current?.refresh();
+    }),
+    { dispose: () => clearTimeout(following) },
+  );
   ctx.subscriptions.push(out, { dispose: () => current?.dispose() });
 
   // Visible desde el primer arranque: sin esto, instalar la extensión no cambia nada en pantalla.

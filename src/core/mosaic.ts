@@ -194,7 +194,8 @@ export function applyEdit(m: Mosaic, raw: unknown, known: (deviceId: string) => 
       return cell ? { ...m, cells: m.cells.filter((c) => c !== cell) } : m;
     case 'add': {
       if (typeof e.deviceId !== 'string' || !known(e.deviceId) || m.cells.length >= MAX_CELLS) return m;
-      const group = Number.isInteger(e.group) && (e.group as number) >= 0 && (e.group as number) < MAX_CELLS ? (e.group as number) : (m.cells[0]?.group ?? 0);
+      // Solo a una fila que existe (el «+» de cada fila); cualquier otra cosa, a la primera.
+      const group = Number.isInteger(e.group) && m.cells.some((c) => c.group === e.group) ? (e.group as number) : (m.cells[0]?.group ?? 0);
       // La celda nueva copia ruta y sesión de la fila a la que se suma, para entrar ya sincronizada.
       const like = m.cells.find((c) => c.group === group) ?? m.cells[0];
       const added: Cell = { id: nextId(m.cells), deviceId: e.deviceId, landscape: false, path: like?.path ?? '/', session: like?.session ?? 'main', group: like ? group : 0, locale: like?.locale };

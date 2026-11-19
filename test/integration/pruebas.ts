@@ -13,6 +13,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { startApi, startUpstream } from '../fixtures/upstream.ts';
 import { SONDA, cargadas, cell, estado, sintetico, sleep, until } from './sonda.ts';
+import { pruebasMejoras } from './pruebas-mejoras.ts';
 
 export interface Resultado {
   id: string;
@@ -362,5 +363,6 @@ export async function pruebas(api: SondaApi, ext: vscode.Extension<unknown>): Pr
     }
   });
 
+  out.push(...(await pruebasMejoras(api)));
   return out;
 }

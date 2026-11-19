@@ -4,10 +4,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { DEVICES, findDevice, rotate, type Device } from '../core/devices.ts';
-import { applyEdit, isDevHost, parseMosaic, type Mosaic } from '../core/mosaic.ts';
+import { applyEdit, isDevHost, normalizePath, parseMosaic, type Mosaic } from '../core/mosaic.ts';
+import type { Route } from '../core/routes.ts';
 import { startProxy, type ProxyOptions, type ProxyPages, type RunningProxy } from '../core/proxy.ts';
 import type { AgentCommand, AgentEvent } from '../core/sync.ts';
 import type { CellView, PanelState, PanelText } from '../webview/panel.ts';
+import { panelCsp, panelHtml } from '../webview/shell.ts';
 
 export interface HostOptions {
   proxy?: Partial<Pick<ProxyOptions, 'relaxCsp' | 'fixCookies' | 'apiOrigins'>>;
@@ -17,6 +19,10 @@ export interface HostOptions {
   onHint?: (origin: string) => void;
   /** Solo la sonda: instrumentos que se insertan en el agente. El producto no los lleva en el paquete. */
   sonda?: { inicio: string; pregunta: string };
+  /** Las rutas del proyecto, para ofrecerlas al cambiar la de una fila. */
+  routes?: () => Promise<Route[]>;
+  /** ¿Está encendido «seguir al editor»? Se pregunta cada vez que se pinta la barra. */
+  follow?: () => boolean;
 }
 
 export interface Metrics {
@@ -34,13 +40,14 @@ interface FromPanel {
   id?: number;
   data?: Metrics;
   group?: number;
+  n?: number;
   edit?: unknown;
   command?: string;
   ev?: AgentEvent & { boot?: string };
 }
 
 /** Botones de la barra que lanzan un comando de la extensión. Lo demás que pida el panel se ignora. */
-const PANEL_COMMANDS = new Set(['openUrl', 'reload', 'capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor']);
+const PANEL_COMMANDS = new Set(['openUrl', 'reload', 'capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor', 'toggleFollowEditor']);
 
 function texts(): PanelText {
   const t = vscode.l10n.t;
@@ -64,6 +71,11 @@ function texts(): PanelText {
     session1: t('session'),
     deployed: t('Deployed site'),
     deployedHint: t('Click and typing sync start switched off on a deployed site, so nothing is done once per device on real data.'),
+    route: t('Change the route of this row'),
+    addToRow: t('Add a device to this row'),
+    zoom: t('Enlarge this cell (Esc to go back)'),
+    follow: t('Follow editor'),
+    errors: t('JavaScript errors on this page'),
   };
 }
 
@@ -92,6 +104,12 @@ export class PanelHost implements vscode.Disposable {
   private readonly extensionUri: vscode.Uri;
   private readonly paths = new Map<string, string>();
   private readonly misses = new Map<string, number>();
+  private readonly errorCounts = new Map<string, number>();
+  private readonly routes: (() => Promise<Route[]>) | undefined;
+  private readonly follow: (() => boolean) | undefined;
+  private readonly moved = new vscode.EventEmitter<void>();
+  /** Una celda ha cambiado de página: lo usa la extensión para recordar el mosaico tal como quedó. */
+  readonly onDidMove = this.moved.event;
   private readonly waiters = new Map<number, (data: unknown) => void>();
   private readonly changed = new vscode.EventEmitter<Mosaic>();
   /** Cada vez que el mosaico cambia de forma (no al navegar): lo usa la extensión para saber qué hay abierto. */
@@ -107,6 +125,8 @@ export class PanelHost implements vscode.Disposable {
     this.fixCookies = opts.proxy?.fixCookies !== false;
     this.sonda = opts.sonda !== undefined;
     this.extensionUri = extensionUri;
+    this.routes = opts.routes;
+    this.follow = opts.follow;
   }
 
   static async open(ctx: vscode.ExtensionContext, input: Mosaic, opts: HostOptions = {}): Promise<PanelHost> {
@@ -138,9 +158,16 @@ export class PanelHost implements vscode.Disposable {
       if (typeof m.origin === 'string' && /^vscode-webview:\/\/[a-z0-9-]+$/i.test(m.origin)) this.proxy.setPanelOrigin(m.origin);
       this.postState();
     } else if (m.t === 'where' && typeof m.cell === 'string' && typeof m.path === 'string') {
-      this.paths.set(m.cell, m.path);
+      if (this.paths.get(m.cell) !== m.path) {
+        this.paths.set(m.cell, m.path);
+        this.moved.fire();
+      }
     } else if (m.t === 'pick') {
-      void this.pickDevice(typeof m.cell === 'string' ? m.cell : undefined);
+      void this.pickDevice(typeof m.cell === 'string' ? m.cell : undefined, Number.isInteger(m.group) ? m.group : undefined);
+    } else if (m.t === 'route' && typeof m.cell === 'string') {
+      void this.pickRoute(m.cell);
+    } else if (m.t === 'errors' && typeof m.cell === 'string' && typeof m.n === 'number' && Number.isFinite(m.n)) {
+      this.errorCounts.set(m.cell, Math.max(0, Math.floor(m.n)));
     } else if (m.t === 'edit') {
       this.apply(applyEdit(this.mosaic(), m.edit, (id) => findDevice(id, this.customDevices) !== undefined));
     } else if (m.t === 'command' && typeof m.command === 'string' && PANEL_COMMANDS.has(m.command)) {
@@ -182,11 +209,65 @@ export class PanelHost implements vscode.Disposable {
 
   private state(): PanelState {
     const devices = [...DEVICES, ...this.customDevices].map((d) => ({ id: d.id, name: d.name, width: d.width, height: d.height }));
-    return { cells: this.views(), sync: this.model.sync, sonda: this.sonda, text: texts(), devices, name: this.model.name, deployed: !isDevHost(this.model.target) };
+    return { cells: this.views(), sync: this.model.sync, sonda: this.sonda, text: texts(), devices, name: this.model.name, deployed: !isDevHost(this.model.target), follow: this.follow?.() === true };
   }
 
   private postState(): void {
     void this.panel.webview.postMessage({ t: 'state', state: this.state() });
+  }
+
+  /** Vuelve a pintar la barra: un ajuste que el panel enseña (seguir al editor) ha cambiado. */
+  refresh(): void {
+    if (!this.disposed) this.postState();
+  }
+
+  /** Lleva una fila entera a otra ruta. El reparto lo hace el panel, que sabe dónde está cada celda. */
+  drive(group: number, path: string): void {
+    if (this.disposed || !this.model.cells.some((c) => c.group === group)) return;
+    void this.panel.webview.postMessage({ t: 'drive', group, path: normalizePath(path) });
+  }
+
+  /** Las filas del mosaico, de arriba abajo. */
+  groups(): number[] {
+    return [...new Set(this.model.cells.map((c) => c.group))].sort((a, b) => a - b);
+  }
+
+  /** Dónde está ahora la primera celda de una fila. */
+  pathOfGroup(group: number): string | undefined {
+    const c = this.model.cells.find((x) => x.group === group);
+    return c ? (this.paths.get(c.id) ?? c.path) : undefined;
+  }
+
+  /** Cambiar la ruta de la fila de una celda: las rutas del proyecto, o la que se escriba. */
+  private async pickRoute(cell: string): Promise<void> {
+    const c = this.model.cells.find((x) => x.id === cell);
+    if (!c) return;
+    const now = this.paths.get(c.id) ?? c.path;
+    const known = (this.routes ? await this.routes() : []).filter((r) => !r.dynamic);
+    if (this.disposed) return;
+    type Item = vscode.QuickPickItem & { path: string };
+    const base: Item[] = [{ path: '/', source: '' }, ...known.filter((r) => r.path !== '/')].map((r) => ({ label: r.path, description: r.source, path: r.path }));
+    const qp = vscode.window.createQuickPick<Item>();
+    qp.title = vscode.l10n.t('Route for this row');
+    qp.placeholder = vscode.l10n.t('Pick a route or type one (/pricing)');
+    qp.value = now;
+    const offer = (v: string): void => {
+      const typed = v.trim();
+      // Lo escrito siempre se puede abrir, aunque no coincida con ninguna ruta detectada.
+      qp.items = typed === '' || base.some((b) => b.path === normalizePath(typed)) ? base : [{ label: normalizePath(typed), description: vscode.l10n.t('Go to this route'), path: normalizePath(typed), alwaysShow: true }, ...base];
+    };
+    offer(now);
+    qp.onDidChangeValue(offer);
+    const chosen = await new Promise<Item | undefined>((resolve) => {
+      qp.onDidAccept(() => {
+        resolve(qp.selectedItems[0]);
+        qp.hide();
+      });
+      qp.onDidHide(() => resolve(undefined));
+      qp.show();
+    });
+    qp.dispose();
+    if (chosen) this.drive(c.group, chosen.path);
   }
 
   /** Se escribe una vez: la política admite cualquier sesión de ESTE proxy (http://*.localhost:<su puerto>). */
@@ -200,6 +281,7 @@ export class PanelHost implements vscode.Disposable {
     if (!valid || valid.target !== this.model.target) return;
     // Lo que cambie de forma se recuerda; la ruta de cada celda la sigue dando la propia celda.
     for (const id of [...this.paths.keys()]) if (!valid.cells.some((c) => c.id === id)) this.paths.delete(id);
+    for (const id of [...this.errorCounts.keys()]) if (!valid.cells.some((c) => c.id === id)) this.errorCounts.delete(id);
     this.model = valid;
     this.panel.title = `ViewKeeper · ${valid.name}`;
     this.postState();
@@ -207,14 +289,14 @@ export class PanelHost implements vscode.Disposable {
   }
 
   /** Selector de dispositivo: para cambiar el de una celda o, sin celda, para añadir una. */
-  private async pickDevice(cell: string | undefined): Promise<void> {
+  private async pickDevice(cell: string | undefined, group?: number): Promise<void> {
     const current = cell ? this.model.cells.find((c) => c.id === cell) : undefined;
     if (cell && !current) return;
     const items = [...DEVICES, ...this.customDevices].map((d) => ({ label: d.name, description: `${d.width}×${d.height}`, id: d.id, picked: d.id === current?.deviceId }));
     const choice = await vscode.window.showQuickPick(items, { title: cell ? vscode.l10n.t('Device for this cell') : vscode.l10n.t('Add device') });
     if (!choice || this.disposed) return;
     const known = (id: string): boolean => findDevice(id, this.customDevices) !== undefined;
-    this.apply(applyEdit(this.mosaic(), cell ? { op: 'device', cell, deviceId: choice.id } : { op: 'add', deviceId: choice.id }, known));
+    this.apply(applyEdit(this.mosaic(), cell ? { op: 'device', cell, deviceId: choice.id } : { op: 'add', deviceId: choice.id, group }, known));
   }
 
   get isDisposed(): boolean {
@@ -258,13 +340,15 @@ export class PanelHost implements vscode.Disposable {
 
   diagnostics(): string[] {
     const miss = [...this.misses].map(([cell, n]) => `cell ${cell}: ${n} actions not replayed (the element was not the same at that width)`);
-    return [...this.proxy.diagnostics(), ...miss];
+    const errors = [...this.errorCounts].filter(([, n]) => n > 0).map(([cell, n]) => `cell ${cell}: ${n} JavaScript errors on the page it shows now`);
+    return [...this.proxy.diagnostics(), ...miss, ...errors];
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.changed.dispose();
+    this.moved.dispose();
     void this.proxy.close();
     this.panel.dispose();
   }
@@ -281,41 +365,5 @@ function html(webview: vscode.Webview, extensionUri: vscode.Uri, frameSource: st
   const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'panel.js'));
   // La política solo deja incrustar el proxy de ESTE panel (su puerto, cualquier sesión), y ejecutar NUESTRO script.
   // El puerto es un número que da el sistema: no puede colar directivas.
-  const csp = `default-src 'none'; frame-src ${frameSource}; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src data:`;
-  return `<!doctype html>
-<html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${csp}">
-<style nonce="${nonce}">${CSS}</style></head>
-<body><div id="barra"></div><div id="mosaico"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
+  return panelHtml({ csp: panelCsp(frameSource, nonce), nonce, script: String(script) });
 }
-
-const CSS = `
-  body { margin: 0; padding: 0; background: var(--vscode-editor-background); color: var(--vscode-foreground); font: 12px var(--vscode-font-family); }
-  #barra { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: var(--vscode-editorWidget-background); border-bottom: 1px solid var(--vscode-panel-border); }
-  #barra .sep { width: 1px; height: 20px; background: var(--vscode-panel-border); margin: 0 4px; }
-  #barra .etq { opacity: .75; margin-right: 2px; }
-  #barra .vivo { margin-left: auto; padding: 1px 8px; border-radius: 9px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); }
-  button, select { font: inherit; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: 1px solid transparent; border-radius: 4px; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
-  select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, transparent); }
-  button:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  button:focus-visible, select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-  button[aria-pressed="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-  button.ico { padding: 3px 5px; background: transparent; color: var(--vscode-foreground); }
-  button.ico:hover { background: var(--vscode-toolbar-hoverBackground); }
-  svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-  #mosaico { padding: 12px; box-sizing: border-box; }
-  .fila { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
-  .aviso { flex-basis: 100%; margin: 0; padding: 6px 10px; border-radius: 4px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); }
-  .vacio { padding: 40px 12px; text-align: center; opacity: .8; }
-  figure { margin: 0; flex: none; }
-  figcaption { display: flex; align-items: center; gap: 4px; padding: 0 0 6px; white-space: nowrap; min-height: 26px; }
-  button.disp { padding: 2px 6px; max-width: 150px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, transparent); }
-  figure.estrecha .dim { display: none; }
-  figure.estrecha button.disp { max-width: 112px; }
-  figcaption .acc { margin-left: auto; display: inline-flex; }
-  figcaption .dim { opacity: .7; }
-  figcaption .ruta { opacity: .85; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; max-width: 220px; }
-  figcaption .ses { font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
-  .escena { overflow: hidden; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: #fff; }
-  iframe { border: 0; transform-origin: 0 0; display: block; background: #fff; }
-`;

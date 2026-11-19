@@ -244,7 +244,7 @@ function estado(p: RunningProxy, cells: Cell[]): PanelState {
     sync: SYNC_ALL,
     sonda: false, // modo producto
     // Los textos del panel salen de la extensión; aquí basta con que existan. El del cortacircuitos se busca en las pruebas.
-    text: Object.fromEntries(['address', 'addDevice', 'sync', 'scroll', 'click', 'input', 'nav', 'reload', 'capture', 'save', 'session', 'matrix', 'rotate', 'remove', 'empty', 'session1', 'deployed', 'deployedHint'].map((k) => [k, k]).concat([['tripped', 'AVISO-CORTACIRCUITOS']])) as unknown as PanelText,
+    text: Object.fromEntries(['address', 'addDevice', 'sync', 'scroll', 'click', 'input', 'nav', 'reload', 'capture', 'save', 'session', 'matrix', 'rotate', 'remove', 'empty', 'session1', 'deployed', 'deployedHint', 'route', 'addToRow', 'zoom', 'follow', 'errors'].map((k) => [k, k]).concat([['tripped', 'AVISO-CORTACIRCUITOS']])) as unknown as PanelText,
   };
 }
 const celda = (id: string, deviceId: string, p: string, session = 'main', group = 0, locale?: string): Cell => ({ id, deviceId, landscape: false, path: p, session, group, locale });

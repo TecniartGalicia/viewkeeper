@@ -13,6 +13,7 @@ export type AgentEvent =
   | { t: 'nav'; url: string }
   | { t: 'miss'; kind: string }
   | { t: 'hint'; kind: string; origin: string }
+  | { t: 'error'; kind: string; msg: string }
   | { t: 'answer'; id: number; data: unknown };
 
 /** Lo que el panel manda a un agente. */
@@ -150,6 +151,31 @@ export class SyncRouter {
       if (at !== undefined && pageKey(at) === pageKey(e.path)) continue; // llegó sola
       this.pending.set(id, { since: t, path: e.path });
       out.push({ to: id, cmd: { t: 'nav', path: e.path } });
+    }
+    return out;
+  }
+
+  /**
+   * Navegación pedida desde fuera de las celdas (el rótulo de la fila, el editor): toda la fila va a esa ruta.
+   * Cada celda queda con la orden pendiente, así que su llegada no se toma por una decisión suya ni rebota;
+   * y la fila recuerda la ruta, para que una celda que se añada después entre ya en ella.
+   * No mira `nav` ni el cortacircuitos: no es una celda arrastrando a otra, es el usuario mandando.
+   */
+  drive(group: number, path: string): Delivery[] {
+    const t = this.now();
+    const out: Delivery[] = [];
+    if (!this.cells.some((c) => c.group === group)) return out;
+    const prev = this.groupPath.get(group);
+    if (prev === undefined || pageKey(prev) !== pageKey(path)) this.groupPath.set(group, path);
+    for (const c of this.cells) {
+      if (c.group !== group) continue;
+      this.expect.delete(c.id);
+      this.gestureAt.delete(c.id);
+      const at = this.where.get(c.id);
+      // Una celda que aún no cargó se pondrá al día sola con su primer aviso (groupPath).
+      if (at === undefined || pageKey(at) === pageKey(path)) continue;
+      this.pending.set(c.id, { since: t, path });
+      out.push({ to: c.id, cmd: { t: 'nav', path } });
     }
     return out;
   }

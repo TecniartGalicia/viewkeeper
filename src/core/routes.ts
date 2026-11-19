@@ -56,6 +56,38 @@ export function detectRoutes(files: readonly string[]): Route[] {
     .slice(0, 200);
 }
 
+/**
+ * La ruta que sirve un fichero del proyecto, si es una página. En un monorepo la app no está en la raíz
+ * («apps/web/app/precios/page.tsx»): se van quitando carpetas por delante hasta que el resto se reconoce.
+ */
+export function routeForFile(file: string): Route | undefined {
+  const segs = file.replace(/\\/g, '/').replace(/^\.\//, '').split('/');
+  // Dependencias y carpetas ocultas (.next, .svelte-kit…) no son páginas del proyecto, estén a la altura que estén.
+  if (segs.some((s) => s === 'node_modules' || s.startsWith('.'))) return undefined;
+  for (let i = 0; i < segs.length && i < 6; i++) {
+    const r = detectRoutes([segs.slice(i).join('/')])[0];
+    // Un HTML suelto solo cuenta en la raíz o en public/ del proyecto, no en cualquier subcarpeta.
+    if (r && (i === 0 || !/\.html$/.test(r.source) || segs[i] === 'public')) return { ...r, source: file };
+  }
+  return undefined;
+}
+
+/** ¿Esta ruta concreta es una instancia de la ruta con segmentos dinámicos? «/blog/hola» lo es de «/blog/[slug]». */
+export function matchesRoute(pattern: string, path: string): boolean {
+  const clean = (path.split(/[?#]/)[0] || '/').replace(/(.)\/$/, '$1');
+  const want = pattern.split('/').filter(Boolean);
+  const have = clean.split('/').filter(Boolean);
+  for (let i = 0; i < want.length; i++) {
+    const w = want[i];
+    if (/^\[\[\.\.\..+\]\]$/.test(w)) return true; // [[...resto]]: cero o más
+    if (/^\[\.\.\..+\]$/.test(w)) return have.length > i; // [...resto]: uno o más
+    if (have[i] === undefined) return false;
+    if (/^\[.+\]$/.test(w) || w.startsWith(':')) continue;
+    if (w !== have[i]) return false;
+  }
+  return have.length === want.length;
+}
+
 /** Sustituye los segmentos dinámicos por los valores que dio el usuario: /blog/[slug] + {slug:'hola'} → /blog/hola */
 export function fillRoute(path: string, values: Readonly<Record<string, string>>): string | undefined {
   let ok = true;

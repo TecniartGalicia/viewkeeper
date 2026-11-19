@@ -72,5 +72,14 @@
   "Start your dev server. This cell retries by itself every two seconds.": "Arranca tu servidor de desarrollo. Esta celda lo reintenta sola cada dos segundos.",
   "This page redirects outside the mosaic": "Esta página redirige fuera del mosaico",
   "It goes to {0}. A cell only shows the site the mosaic was opened for, so the redirect was not followed. Signing in through another site cannot happen inside a cell.": "Va a {0}. Una celda solo enseña la web para la que se abrió el mosaico, así que la redirección no se ha seguido. Iniciar sesión a través de otro sitio no cabe dentro de una celda.",
-  "Back": "Volver"
+  "Back": "Volver",
+  "Change the route of this row": "Cambiar la ruta de esta fila",
+  "Add a device to this row": "Añadir un dispositivo a esta fila",
+  "Enlarge this cell (Esc to go back)": "Ampliar esta celda (Esc para volver)",
+  "Follow editor": "Seguir al editor",
+  "JavaScript errors on this page": "errores de JavaScript en esta página",
+  "Route for this row": "Ruta de esta fila",
+  "Pick a route or type one (/pricing)": "Elige una ruta o escribe una (/precios)",
+  "Go to this route": "Ir a esta ruta",
+  "Reopen {0}": "Reabrir {0}"
 }
