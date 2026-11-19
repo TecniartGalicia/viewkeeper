@@ -31,7 +31,7 @@ export interface PanelText {
   save: string;
   session: string;
   matrix: string;
-  rotate: string;
+  rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
   remove: string;
   empty: string;
   session1: string;

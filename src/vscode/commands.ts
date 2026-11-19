@@ -52,6 +52,12 @@ async function pickTarget(): Promise<{ origin: string; path: string } | undefine
 }
 
 async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void> {
+  // En una ventana remota (WSL, SSH, contenedor, Codespaces) el proxy corre en la otra máquina y las celdas,
+  // que se pintan en esta, no lo alcanzan: mejor decirlo que abrir un panel en blanco (P-46).
+  if (vscode.env.remoteName) {
+    void vscode.window.showWarningMessage(t('ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.', vscode.env.remoteName));
+    return;
+  }
   const capped = capCells(mosaic.cells);
   if (capped.dropped > 0) void vscode.window.showWarningMessage(t('A mosaic holds up to {0} cells; the rest were left out.', MAX_CELLS));
   const next: Mosaic = { ...mosaic, cells: capped.cells };

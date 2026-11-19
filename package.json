@@ -126,11 +126,6 @@
         "command": "viewkeeper.doctor",
         "title": "%cmd.doctor%",
         "category": "ViewKeeper"
-      },
-      {
-        "command": "viewkeeper.licenseStatus",
-        "title": "%cmd.licenseStatus%",
-        "category": "ViewKeeper"
       }
     ],
     "menus": {

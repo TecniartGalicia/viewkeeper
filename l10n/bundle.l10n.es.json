@@ -50,5 +50,6 @@
   "Rotate": "Girar",
   "Remove": "Quitar",
   "No cells. Add a device to start.": "No hay celdas. Añade un dispositivo para empezar.",
-  "session": "sesión"
+  "session": "sesión",
+  "ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.": "Por ahora ViewKeeper funciona en ventanas locales. En una ventana remota ({0}) las celdas no llegan a tu servidor de desarrollo."
 }

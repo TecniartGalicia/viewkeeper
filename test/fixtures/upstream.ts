@@ -44,6 +44,14 @@ export function startUpstream(): Promise<Upstream> {
       );
     } else if (url === '/logout') {
       html(pagina('ADIOS'), { 'set-cookie': ['rol=; Path=/; Max-Age=0', 'sid=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT'] });
+    } else if (url === '/con-api') {
+      // Una app cuyo frontal llama a su API en otro puerto (P-47). Escribe en la página lo que obtuvo.
+      const api = new URL(req.url ?? '/', 'http://x').searchParams.get('api') ?? '';
+      html(`<!doctype html><html><head><meta charset="utf-8"><title>con api</title></head><body><p id="r">esperando</p><script>
+        fetch(${JSON.stringify(api)} + '/datos', { method: 'POST', body: 'hola', headers: { 'content-type': 'text/plain' } })
+          .then(function (r) { return r.text(); })
+          .then(function (t) { document.getElementById('r').textContent = 'API-OK:' + t; }, function () { document.getElementById('r').textContent = 'API-FALLA'; });
+      </script></body></html>`);
     } else if (url === '/eco') {
       // Devuelve el cuerpo recibido: prueba que un POST llega entero.
       const chunks: Buffer[] = [];
@@ -82,6 +90,33 @@ export function startUpstream(): Promise<Upstream> {
         close: () =>
           new Promise<void>((done) => {
             wss.close();
+            server.closeAllConnections();
+            server.close(() => done());
+          }),
+      });
+    });
+  });
+}
+
+/** Una API en otro puerto que solo admite por CORS el origen de la app (P-47). */
+export function startApi(appOrigin: string): Promise<Upstream> {
+  const server = http.createServer((req, res) => {
+    const cors = { 'access-control-allow-origin': appOrigin, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', vary: 'origin' };
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, cors).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => res.writeHead(200, { ...cors, 'content-type': 'application/json' }).end(JSON.stringify({ origen: req.headers.origin ?? null, cuerpo: Buffer.concat(chunks).toString() })));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({
+        origin: `http://localhost:${port}`,
+        close: () =>
+          new Promise<void>((done) => {
             server.closeAllConnections();
             server.close(() => done());
           }),

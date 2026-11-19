@@ -8,14 +8,15 @@ import type { Cell, Mosaic } from '../../src/core/mosaic.ts';
 import { SYNC_ALL } from '../../src/core/mosaic.ts';
 import type { PanelHost } from '../../src/vscode/panelHost.ts';
 import { startUpstream } from '../fixtures/upstream.ts';
+import { pruebas } from './pruebas.ts';
 
-let SONDA = { inicio: '', pregunta: '' };
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-type Estado = { boot: string; url: string; width: number; util: number; estrecho: boolean; ua: string; lang: string; touch: number; scrollY: number; maxY: number; ry: number; valor: string | null; texto: string; cookieJs: string; ws: string[]; seguro: boolean; timeout?: boolean };
+export let SONDA = { inicio: '', pregunta: '' };
+export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+export type Estado = { boot: string; url: string; width: number; util: number; estrecho: boolean; ua: string; lang: string; touch: number; scrollY: number; maxY: number; ry: number; valor: string | null; texto: string; cookieJs: string; ws: string[]; seguro: boolean; timeout?: boolean };
 
-const cell = (id: string, deviceId: string, session = 'main', extra: Partial<Cell> = {}): Cell => ({ id, deviceId, landscape: false, path: '/', session, group: 0, ...extra });
+export const cell = (id: string, deviceId: string, session = 'main', extra: Partial<Cell> = {}): Cell => ({ id, deviceId, landscape: false, path: '/', session, group: 0, ...extra });
 
-async function until(fn: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
+export async function until(fn: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
     if (await fn()) return true;
@@ -24,7 +25,7 @@ async function until(fn: () => boolean | Promise<boolean>, ms: number): Promise<
   return false;
 }
 
-async function estado(h: PanelHost, id: string, sel?: string): Promise<Estado> {
+export async function estado(h: PanelHost, id: string, sel?: string): Promise<Estado> {
   // Una pregunta hecha a una celda que está navegando se pierde: se devuelve un estado vacío, no una excepción.
   return ((await h.ask(id, 'estado', { sel })) ?? { timeout: true, texto: '', url: '', ws: [] }) as Estado;
 }
@@ -36,11 +37,11 @@ async function navegar(h: PanelHost, id: string, path: string, ok: (url: string)
   return until(() => h.events.slice(desde).some((e) => e.cell === id && e.ev.t === 'ready' && ok(e.ev.url)), ms);
 }
 
-async function cargadas(h: PanelHost, ids: string[], ms = 20000): Promise<boolean> {
+export async function cargadas(h: PanelHost, ids: string[], ms = 20000): Promise<boolean> {
   return until(() => ids.every((id) => h.events.some((e) => e.cell === id && e.ev.t === 'ready')), ms);
 }
 
-async function sintetico(api: SondaApi, fixCookies: boolean): Promise<Record<string, unknown>> {
+export async function sintetico(api: SondaApi, fixCookies: boolean): Promise<Record<string, unknown>> {
   const up = await startUpstream();
   const r: Record<string, unknown> = { upstream: up.origin, fixCookies };
   const mosaic: Mosaic = {
@@ -188,13 +189,19 @@ export async function run(): Promise<void> {
   const res: Record<string, unknown> = { vscode: vscode.version, fecha: new Date().toISOString() };
   const guardar = (): void => fs.writeFileSync(out, JSON.stringify(res, null, 2));
   try {
-    const ext = vscode.extensions.getExtension<SondaApi | undefined>('argalla-sonda.mosaico-sonda');
+    const ext = vscode.extensions.getExtension<SondaApi | undefined>('argalla.viewkeeper');
     if (!ext) throw new Error('extensión de la sonda no cargada');
     const api = await ext.activate();
     if (!api) throw new Error('la extensión no exporta la puerta de sonda (¿no está en modo prueba?)');
     const dir = path.join(ext.extensionPath, 'test', 'sonda');
     SONDA = { inicio: fs.readFileSync(path.join(dir, 'inicio.js'), 'utf8'), pregunta: fs.readFileSync(path.join(dir, 'pregunta.js'), 'utf8') };
     const solo = process.env.VK_SOLO ?? '';
+    if (solo === 't') {
+      // Suite de integración: afirmaciones, no medidas. El lanzador (run.ts) lee el resultado y decide.
+      res.pruebas = await pruebas(api, ext);
+      guardar();
+      return;
+    }
     if (solo === 'p') {
       // Modo pausa: deja abierta una matriz 2 rutas × 3 dispositivos para mirarla (y capturar la pantalla).
       const up = await startUpstream();
