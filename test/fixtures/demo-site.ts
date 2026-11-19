@@ -78,7 +78,7 @@ function product(id: string): string {
   );
 }
 
-export function startDemoSite(): Promise<{ origin: string; close(): Promise<void> }> {
+export function startDemoSite(port = 0): Promise<{ origin: string; close(): Promise<void> }> {
   const server = http.createServer((req, res) => {
     const url = (req.url ?? '/').split('?')[0];
     const m = /^\/product\/([a-z]+)$/.exec(url);
@@ -90,7 +90,7 @@ export function startDemoSite(): Promise<{ origin: string; close(): Promise<void
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html);
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       const port = (server.address() as AddressInfo).port;
       resolve({
         origin: `http://localhost:${port}`,
