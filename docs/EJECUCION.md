@@ -73,8 +73,10 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 - Commits: `24de59e`.
 - I-4 y P-42: la suite entera en **VSCodium 1.143** (descargado portátil), 8 de 8; sin reescribir cookies no llega ninguna, igual que en VS Code. Cursor no se ha probado.
 - Borradores de lanzamiento en `docs/LANZAMIENTO.md` (fase 5).
-- Pendiente antes de etiquetar: aplicar la auditoría independiente de las fases 2 y 3.
+- **Auditoría independiente de las fases 2 y 3: 19 hallazgos** (1 alto, 7 medios, 11 bajos; 15 reproducidos ejecutando). El alto: con el editor partido en dos, las celdas bajaban al 5 % de alto. Todos corregidos en `c7fb4af` y comprobados con los guiones del propio auditor: su banco del panel sin un solo defecto y su sonda de comandos dentro de VS Code con todos los casos resueltos. Quedan, aceptados: el botón «Añadir dispositivo» añade a la primera fila (no sabe de qué fila hablas), y `localhost` y `127.0.0.1` son dos orígenes distintos para el aviso de API.
+- Al pasarlo todo se vio que dos de las tres partes del banco de navegador terminaban con `process.exit(0)` antes de mirar su resultado: no podían fallar. Corregido; el banco son **64 casos**, no 27.
+- Repo subido a `TecniartGalicia/viewkeeper` (`71a80a8`).
 
 ## Si esto se retoma en otra sesión
 
-Mirar la tabla de estado y el diario. La fase 4 está a la espera de la auditoría; después: push a `main`, CI en verde, etiqueta `v0.1.0`.
+Mirar la tabla de estado y el diario. Fase 4: CI en GitHub, después etiqueta `v0.1.0` y comprobar en las tres tiendas. `scripts/gh-runs.mjs ci|release --esperar` sigue una ejecución.
