@@ -19,16 +19,18 @@ export function slug(s: string): string {
   return out === '' ? 'inicio' : out;
 }
 
-export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (line: string) => void): Promise<void> {
-  if (host.mosaic().cells.length === 0) return;
+/** `to`: carpeta de destino ya elegida (las pruebas); si no, se pregunta. Devuelve los ficheros guardados. */
+export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (line: string) => void, to?: vscode.Uri): Promise<string[]> {
+  const saved: string[] = [];
+  if (host.mosaic().cells.length === 0) return saved;
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   const exe = await findBrowser(io, process.platform, process.env, cfg.get<string>('browserPath') || undefined);
   if (!exe) {
     void vscode.window.showErrorMessage(vscode.l10n.t('ViewKeeper needs Chrome, Edge, Brave or Chromium to capture. Install one or set "viewkeeper.browserPath".'));
-    return;
+    return saved;
   }
-  const dest = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: vscode.l10n.t('Save captures here') });
-  if (!dest?.[0]) return;
+  const dest = to ? [to] : await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: vscode.l10n.t('Save captures here') });
+  if (!dest?.[0]) return saved;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'viewkeeper-'));
   try {
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('ViewKeeper: capturing…') }, async () => {
@@ -66,11 +68,14 @@ export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (li
       const sheetShot: Shot = { label: 'hoja', url: vscode.Uri.file(sheetHtml).toString(), out: path.join(tmp, `${slug(mosaic.name)}-mosaico.png`), width: sheet.width, height: sheet.height, dpr: 1 };
       const sheetRes = await capture(io, exe, [sheetShot], path.join(tmp, 'perfil-hoja'));
       for (const s of [...res.ok, ...sheetRes.ok]) {
-        await vscode.workspace.fs.copy(vscode.Uri.file(s.out), vscode.Uri.joinPath(dest[0], path.basename(s.out)), { overwrite: true });
+        const target = vscode.Uri.joinPath(dest[0], path.basename(s.out));
+        await vscode.workspace.fs.copy(vscode.Uri.file(s.out), target, { overwrite: true });
+        saved.push(target.fsPath);
       }
       const failed = res.failed.length + sheetRes.failed.length;
       for (const s of [...res.failed, ...sheetRes.failed]) log(`captura fallida: ${s.label} (${s.width}×${s.height})`);
       const open = vscode.l10n.t('Open folder');
+      if (to) return;
       const msg = failed ? vscode.window.showWarningMessage(vscode.l10n.t('{0} capture(s) failed. Run "ViewKeeper: Diagnose" for details.', failed), open) : vscode.window.showInformationMessage(vscode.l10n.t('{0} captures saved.', res.ok.length + sheetRes.ok.length), open);
       void msg.then((a) => {
         if (a === open) void vscode.env.openExternal(dest[0]);
@@ -83,4 +88,5 @@ export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (li
       /* el navegador puede tardar en soltar su perfil; el sistema limpia el temporal */
     }
   }
+  return saved;
 }

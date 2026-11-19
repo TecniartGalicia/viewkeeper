@@ -4,7 +4,12 @@ import * as vscode from 'vscode';
 import * as net from 'node:net';
 import type { SondaApi } from '../../src/extension.ts';
 import { findDevice } from '../../src/core/devices.ts';
-import { SYNC_ALL, applyEdit, type Mosaic } from '../../src/core/mosaic.ts';
+import { SYNC_ALL, addSession, applyEdit, type Mosaic } from '../../src/core/mosaic.ts';
+import { deleteMosaic, loadMosaics, saveMosaic } from '../../src/vscode/store.ts';
+import { captureMosaic } from '../../src/vscode/captureFlow.ts';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { startApi, startUpstream } from '../fixtures/upstream.ts';
 import { SONDA, cargadas, cell, estado, sintetico, sleep, until } from './sonda.ts';
 
@@ -191,6 +196,89 @@ export async function pruebas(api: SondaApi, ext: vscode.Extension<unknown>): Pr
     } finally {
       await apiSrv.close();
       await up.close();
+    }
+  });
+
+  // I-6 · mosaicos guardados en .vscode/viewkeeper.json: guardar, leer, sustituir por nombre, borrar, y un
+  // fichero roto o editado a mano no rompe nada.
+  await prueba('I-6', async () => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) return [false, 'la suite no abrió ninguna carpeta'];
+    const f: string[] = [];
+    const m: Mosaic = { v: 1, name: 'tienda', target: 'http://localhost:5173', sync: { ...SYNC_ALL, nav: false }, cells: [cell('a', 'iphone-15', 'main', { path: '/carrito' }), cell('b', 'laptop', 'admin', { group: 1 })] };
+    await saveMosaic(folder, m);
+    await saveMosaic(folder, { ...m, name: 'otro' });
+    await saveMosaic(folder, { ...m, cells: [m.cells[0]] }); // mismo nombre: sustituye
+    const l1 = await loadMosaics(folder);
+    if (l1.length !== 2 || l1[0].name !== 'tienda' || l1[0].cells.length !== 1) f.push(`tras guardar: ${JSON.stringify(l1.map((x) => [x.name, x.cells.length]))}`);
+    if (l1[1]?.sync.nav !== false || l1[1]?.cells[1]?.session !== 'admin') f.push('no conserva sesión ni interruptores');
+    await deleteMosaic(folder, 'otro');
+    if ((await loadMosaics(folder)).length !== 1) f.push('borrar no borró');
+    const fichero = vscode.Uri.joinPath(folder.uri, '.vscode', 'viewkeeper.json');
+    await vscode.workspace.fs.writeFile(fichero, Buffer.from('{ esto no es json'));
+    if ((await loadMosaics(folder)).length !== 0) f.push('un fichero roto no da lista vacía');
+    await vscode.workspace.fs.writeFile(fichero, Buffer.from(JSON.stringify({ v: 1, mosaics: [{ v: 1, name: 'x', target: 'file:///etc', cells: [] }, m, 7] })));
+    const l2 = await loadMosaics(folder);
+    if (l2.length !== 1 || l2[0].name !== 'tienda') f.push(`un fichero editado a mano: ${JSON.stringify(l2.map((x) => x.name))}`);
+    const restos = fs.readdirSync(path.join(folder.uri.fsPath, '.vscode')).filter((x) => x.endsWith('.tmp'));
+    if (restos.length) f.push(`quedan temporales: ${restos.join(', ')}`);
+    return [f.length === 0, f.length ? f.join('; ') : 'guardar, sustituir, borrar y leer ficheros rotos, bien'];
+  });
+
+  // I-7 · añadir una sesión en vivo: la celda nueva tiene su propio bote de cookies; la política del webview se
+  // reescribe para el origen nuevo; y la captura fotografía cada celda con SU sesión iniciada.
+  await prueba('I-7', async () => {
+    const up = await startUpstream();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vk-cap-'));
+    const h = await api.open({ v: 1, name: 'sesiones', target: up.origin, sync: SYNC_ALL, cells: [cell('a', 'iphone-15')] }, { sonda: SONDA });
+    const f: string[] = [];
+    try {
+      await cargadas(h, ['a']);
+      h.send('a', { t: 'nav', path: '/login' });
+      await until(async () => (await estado(h, 'a')).url?.endsWith('/login'), 8000);
+      // Fuera de /login: la sesión nueva copia la ruta de la fila, y /login inicia sesión al cargarse.
+      h.send('a', { t: 'nav', path: '/b' });
+      await until(async () => (await estado(h, 'a')).url?.endsWith('/b'), 8000);
+      const n0 = h.events.length;
+      const next = addSession(h.mosaic(), 'admin');
+      if (!next) return [false, 'addSession devolvió undefined'];
+      h.apply(next);
+      const nueva = next.cells.at(-1)!.id;
+      const llega = await until(() => h.events.slice(n0).some((e) => e.cell === nueva && e.ev.t === 'ready'), 10000);
+      if (!llega) f.push('la celda de la sesión nueva no cargó (¿la política del webview no admite su origen?)');
+      const quien = async (id: string): Promise<string> => {
+        const x = (await h.ask(id, 'fetch', { path: '/whoami' })) as { body?: string } | undefined;
+        try {
+          return (JSON.parse(x?.body ?? '{}') as { cookie?: string }).cookie ?? '';
+        } catch {
+          return 'ERROR';
+        }
+      };
+      const ca = await quien('a');
+      const cb = await quien(nueva);
+      if (!ca.includes('sid=abc')) f.push(`la sesión principal no tiene su cookie: «${ca}»`);
+      if (cb !== '') f.push(`la sesión nueva hereda cookies: «${cb}»`);
+      // Captura: necesita un navegador instalado (Chrome, Edge…). En una máquina sin ninguno, se dice y no falla.
+      const saved = await captureMosaic(h, false, () => {}, vscode.Uri.file(dir));
+      const pngs = saved.filter((s) => s.endsWith('.png'));
+      if (pngs.length === 0) {
+        f.push('la captura no guardó nada (¿hay Chrome o Edge instalado?)');
+      } else {
+        const hoja = pngs.find((s) => s.endsWith('-mosaico.png'));
+        if (!hoja) f.push('falta la hoja de contactos');
+        if (pngs.length !== h.mosaic().cells.length + 1) f.push(`capturas: ${pngs.length}, se esperaban ${h.mosaic().cells.length + 1}`);
+        const b = fs.readFileSync(pngs[0]);
+        if (b.readUInt32BE(16) !== 393 * 3) f.push(`ancho de la captura del iPhone: ${b.readUInt32BE(16)}, se esperaba 1179`);
+      }
+      return [f.length === 0, f.length ? f.join('; ') : `sesión nueva aislada y viva; ${pngs.length} capturas con la hoja`];
+    } finally {
+      h.dispose();
+      await up.close();
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* nada */
+      }
     }
   });
 
