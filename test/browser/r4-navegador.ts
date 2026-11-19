@@ -312,20 +312,33 @@ const panel = await servidorFalso((req, res, body) => {
 for (const p of [px, pxb, px2]) p.setPanelOrigin(panel.origin);
 
 // ───────────────────────── Chrome sin ventana + CDP
-const perfil = fs.mkdtempSync(path.join(process.env.AUD_TMP ?? os.tmpdir(), 'vk-aud-'));
-const chrome = spawn(
-  CHROME,
-  ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${perfil}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps', '--metrics-recording-only', '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost , EXCLUDE 127.0.0.1', '--window-size=1600,1000', 'about:blank'],
-  { stdio: 'ignore' },
-);
+// En un runner de CI recién arrancado Chrome puede tardar más de 10 s en abrir el puerto de depuración (pasó 3 veces
+// el 19-11): hasta 30 s por intento y un segundo intento con perfil nuevo antes de rendirse.
+function lanzaChrome(): { chrome: ReturnType<typeof spawn>; perfil: string } {
+  const perfil = fs.mkdtempSync(path.join(process.env.AUD_TMP ?? os.tmpdir(), 'vk-aud-'));
+  const chrome = spawn(
+    CHROME,
+    ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${perfil}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps', '--metrics-recording-only', '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost , EXCLUDE 127.0.0.1', '--window-size=1600,1000', 'about:blank'],
+    { stdio: 'ignore' },
+  );
+  return { chrome, perfil };
+}
+let { chrome, perfil } = lanzaChrome();
 let wsUrl = '';
-for (let i = 0; i < 100 && !wsUrl; i++) {
-  await espera(100);
-  try {
-    const [p, ruta] = fs.readFileSync(path.join(perfil, 'DevToolsActivePort'), 'utf8').trim().split('\n');
-    wsUrl = `ws://127.0.0.1:${p.trim()}${ruta.trim()}`;
-  } catch {
-    /* aún no */
+for (let intento = 1; intento <= 2 && !wsUrl; intento++) {
+  if (intento === 2) {
+    console.log('Chrome no abrió el puerto de depuración en 30 s; segundo intento con un perfil nuevo.');
+    chrome.kill();
+    ({ chrome, perfil } = lanzaChrome());
+  }
+  for (let i = 0; i < 300 && !wsUrl; i++) {
+    await espera(100);
+    try {
+      const [p, ruta] = fs.readFileSync(path.join(perfil, 'DevToolsActivePort'), 'utf8').trim().split('\n');
+      wsUrl = `ws://127.0.0.1:${p.trim()}${ruta.trim()}`;
+    } catch {
+      /* aún no */
+    }
   }
 }
 if (!wsUrl) {
@@ -415,15 +428,24 @@ try {
     const msgs0 = await evalua<string[]>(s, 'window.__msgs.slice()');
     nota(`mensajes que el panel recibe de las celdas al cargar: ${JSON.stringify([...new Set(msgs0.map((x) => x.split(':')[1]))])}`);
 
+    // Esperar a que llegue (o a que pasen 4 s) en vez de una pausa fija: en Windows de CI 700 ms no siempre bastan.
     let d = registro.length;
     await clic(s, 0, 35, 78);
-    await espera(700);
+    await hasta(() => {
+      const c = cuenta('icono', d);
+      return !!c['768'] && !!c['1366'];
+    }, 4000);
+    await espera(300);
     const ico = cuenta('icono', d);
     caso('CLI-1', '[H-5] clic sobre el icono SVG de un botón no llega a las otras celdas', !ico['768'] || !ico['1366'], `manejador ejecutado por celda: ${n(ico)}`);
 
     d = registro.length;
     await clic(s, 0, 60, 135);
-    await espera(700);
+    await hasta(() => {
+      const c = cuenta(/^chk:/, d);
+      return !!c['768'] && !!c['1366'];
+    }, 4000);
+    await espera(700); // y margen para ver si llegan cambios de más (el defecto H-8 eran tres)
     const chk = cuenta(/^chk:/, d);
     caso('CLI-2', '[H-8] clic en la etiqueta de una casilla: tres cambios en las seguidoras', (chk['768']?.length ?? 0) !== 1 || (chk['1366']?.length ?? 0) !== 1, `eventos change por celda: ${JSON.stringify(chk)}`);
 
