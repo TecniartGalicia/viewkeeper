@@ -239,6 +239,7 @@ export async function pruebas(api: SondaApi, ext: vscode.Extension<unknown>): Pr
       // Fuera de /login: la sesión nueva copia la ruta de la fila, y /login inicia sesión al cargarse.
       h.send('a', { t: 'nav', path: '/b' });
       await until(async () => (await estado(h, 'a')).url?.endsWith('/b'), 8000);
+      const bootAntes = (await estado(h, 'a')).boot;
       const n0 = h.events.length;
       const next = addSession(h.mosaic(), 'admin');
       if (!next) return [false, 'addSession devolvió undefined'];
@@ -246,6 +247,8 @@ export async function pruebas(api: SondaApi, ext: vscode.Extension<unknown>): Pr
       const nueva = next.cells.at(-1)!.id;
       const llega = await until(() => h.events.slice(n0).some((e) => e.cell === nueva && e.ev.t === 'ready'), 10000);
       if (!llega) f.push('la celda de la sesión nueva no cargó (¿la política del webview no admite su origen?)');
+      // M1: añadir una sesión no vuelve a cargar las celdas que ya estaban.
+      if ((await estado(h, 'a')).boot !== bootAntes) f.push('añadir la sesión recargó la celda que ya estaba');
       const quien = async (id: string): Promise<string> => {
         const x = (await h.ask(id, 'fetch', { path: '/whoami' })) as { body?: string } | undefined;
         try {

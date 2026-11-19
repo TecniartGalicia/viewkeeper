@@ -65,7 +65,7 @@ La barra del propio panel añade dispositivos y enciende o apaga cada tipo de si
 | Ajuste | Por defecto | |
 |---|---|---|
 | `viewkeeper.defaultDevices` | `["iphone-15", "ipad-mini", "laptop"]` | Dispositivos de un mosaico nuevo |
-| `viewkeeper.customDevices` | `[]` | Los tuyos: `{ "name", "width", "height", "mobile" }` |
+| `viewkeeper.customDevices` | `[]` | Los tuyos: `{ "id", "name", "width", "height", "mobile" }` |
 | `viewkeeper.apiOrigins` | `[]` | API en otros puertos locales que pasan por el proxy. Solo si ya admiten por CORS el origen de tu app |
 | `viewkeeper.relaxCsp` | `true` | Quitar la CSP de tu app durante la vista previa |
 | `viewkeeper.fixCookies` | `true` | Reescribir las cookies para poder iniciar sesión dentro del panel |

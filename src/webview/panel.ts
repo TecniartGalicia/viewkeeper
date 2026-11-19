@@ -88,6 +88,7 @@ const ICONS: Record<string, string> = {
   grid: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx=".8"/><rect x="9" y="2.5" width="4.5" height="4.5" rx=".8"/><rect x="2.5" y="9" width="4.5" height="4.5" rx=".8"/><rect x="9" y="9" width="4.5" height="4.5" rx=".8"/>',
   rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  chevron: '<path d="M4.5 6.5 8 10l3.5-3.5"/>',
 };
 function icon(name: string): SVGSVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -110,40 +111,40 @@ function button(label: string, iconName: string | undefined, onClick: () => void
   return b;
 }
 const edit = (e: Edit): void => vscode.postMessage({ t: 'edit', edit: e });
+/** Clave estable de un control, para devolverle el foco cuando la barra o el rótulo se vuelven a pintar. */
+function withKey<T extends HTMLElement>(el: T, k: string): T {
+  el.dataset.k = k;
+  return el;
+}
 const command = (c: string): void => vscode.postMessage({ t: 'command', command: c });
 
-function deviceSelect(current: string | undefined, placeholder: string | undefined, onPick: (id: string) => void): HTMLSelectElement {
-  const sel = document.createElement('select');
-  if (placeholder) {
-    const o = document.createElement('option');
-    o.value = '';
-    o.textContent = placeholder;
-    sel.append(o);
-  }
-  for (const d of state?.devices ?? []) {
-    const o = document.createElement('option');
-    o.value = d.id;
-    o.textContent = placeholder ? `${d.name} · ${d.width}×${d.height}` : d.name;
-    if (d.id === current) o.selected = true;
-    sel.append(o);
-  }
-  sel.addEventListener('change', () => {
-    if (sel.value) onPick(sel.value);
-    if (placeholder) sel.value = '';
-  });
-  return sel;
+const pick = (cell?: string): void => vscode.postMessage({ t: 'pick', cell });
+
+function deviceButton(c: CellView): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'disp';
+  b.dataset.k = `${c.id}:dev`;
+  b.title = `${c.label} · ${c.width}×${c.height}`;
+  b.append(document.createTextNode(c.label), icon('chevron'));
+  b.addEventListener('click', () => pick(c.id));
+  return b;
 }
 
 // ───────────────────────── barra de herramientas
 
 function renderBar(s: PanelState): void {
   barEl.textContent = '';
-  const add = deviceSelect(undefined, s.text.addDevice, (id) => edit({ op: 'add', deviceId: id }));
-  add.title = s.text.addDevice;
+  const add = button(s.text.addDevice, 'plus', () => pick());
+  add.dataset.k = 'bar:add';
   const label = document.createElement('span');
   label.className = 'etq';
   label.textContent = s.text.sync;
-  const toggles = (['scroll', 'click', 'input', 'nav'] as const).map((k) => button(s.text[k], undefined, () => edit({ op: 'sync', key: k, value: !s.sync[k] }), { pressed: s.sync[k] }));
+  const toggles = (['scroll', 'click', 'input', 'nav'] as const).map((k) => {
+    const b = button(s.text[k], undefined, () => edit({ op: 'sync', key: k, value: !s.sync[k] }), { pressed: s.sync[k] });
+    b.dataset.k = `bar:${k}`;
+    return b;
+  });
   const sep = (): HTMLElement => Object.assign(document.createElement('span'), { className: 'sep' });
   barEl.append(
     add,
@@ -151,11 +152,11 @@ function renderBar(s: PanelState): void {
     label,
     ...toggles,
     sep(),
-    button(s.text.reload, 'reload', () => command('reload')),
-    button(s.text.capture, 'camera', () => command('capture')),
-    button(s.text.save, 'save', () => command('save')),
-    button(s.text.session, 'user', () => command('addSession')),
-    button(s.text.matrix, 'grid', () => command('openMatrix')),
+    withKey(button(s.text.reload, 'reload', () => command('reload')), 'bar:reload'),
+    withKey(button(s.text.capture, 'camera', () => command('capture')), 'bar:capture'),
+    withKey(button(s.text.save, 'save', () => command('save')), 'bar:save'),
+    withKey(button(s.text.session, 'user', () => command('addSession')), 'bar:addSession'),
+    withKey(button(s.text.matrix, 'grid', () => command('openMatrix')), 'bar:openMatrix'),
   );
 }
 
@@ -174,8 +175,7 @@ function cellKey(c: CellView): string {
 function caption(c: CellView, fig: HTMLElement): void {
   const s = state as PanelState;
   const cap = document.createElement('figcaption');
-  const sel = deviceSelect(c.deviceId, undefined, (id) => edit({ op: 'device', cell: c.id, deviceId: id }));
-  sel.title = `${c.label} · ${c.width}×${c.height}`;
+  const sel = deviceButton(c);
   const dim = document.createElement('span');
   dim.className = 'dim';
   dim.textContent = `${c.width}×${c.height}`;
@@ -194,7 +194,7 @@ function caption(c: CellView, fig: HTMLElement): void {
   // Girar y quitar, juntos y a la derecha.
   const acc = document.createElement('span');
   acc.className = 'acc';
-  acc.append(button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }));
+  acc.append(withKey(button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), `${c.id}:rot`), withKey(button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }), `${c.id}:del`));
   cap.append(where, acc);
   fig.querySelector('figcaption')?.remove();
   fig.prepend(cap);
@@ -250,6 +250,7 @@ function layout(): void {
  * que siguen se dejan donde están y solo se añaden, quitan o redimensionan las que cambian.
  */
 function render(next: PanelState): void {
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.k;
   state = next;
   router.update(next.cells, next.sync);
   renderBar(next);
@@ -297,6 +298,7 @@ function render(next: PanelState): void {
   layout();
   // La dirección se pone con el iframe ya colocado y medido: la página nunca ve un ancho de 0 al arrancar.
   for (const [f, src] of loads) f.src = src;
+  if (focused) document.querySelector<HTMLElement>(`[data-k="${CSS.escape(focused)}"]`)?.focus();
 }
 
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
@@ -341,6 +343,8 @@ window.addEventListener('message', (ev: MessageEvent) => {
 });
 
 new ResizeObserver(layout).observe(rootEl);
+// El observador solo ve el ancho del mosaico; si la ventana crece solo en alto, las celdas también deben crecer.
+window.addEventListener('resize', layout);
 // Navegaciones en espera (GRACE_MS): las celdas que no llegaron solas reciben la orden.
 setInterval(() => {
   for (const d of router.due()) toCell(d.to, d.cmd);

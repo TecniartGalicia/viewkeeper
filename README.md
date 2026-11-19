@@ -65,7 +65,7 @@ The panel's own toolbar adds a device, switches each kind of sync on or off, and
 | Setting | Default | |
 |---|---|---|
 | `viewkeeper.defaultDevices` | `["iphone-15", "ipad-mini", "laptop"]` | Devices for a new mosaic |
-| `viewkeeper.customDevices` | `[]` | Your own: `{ "name", "width", "height", "mobile" }` |
+| `viewkeeper.customDevices` | `[]` | Your own: `{ "id", "name", "width", "height", "mobile" }` |
 | `viewkeeper.apiOrigins` | `[]` | APIs on other local ports to route through the proxy. Only used if they already allow your app's origin by CORS |
 | `viewkeeper.relaxCsp` | `true` | Remove your app's CSP during the preview |
 | `viewkeeper.fixCookies` | `true` | Rewrite cookies so sign-in works inside the panel |

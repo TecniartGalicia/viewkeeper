@@ -9,11 +9,11 @@
   "cmd.captureFullPage": "Capturar el mosaico (páginas enteras)",
   "cmd.doctor": "Diagnosticar",
   "cfg.defaultDevices": "Dispositivos que se muestran al abrir un mosaico por primera vez. Identificadores del catálogo o de `viewkeeper.customDevices`.",
-  "cfg.customDevices": "Tus propios dispositivos: `{ \"name\", \"width\", \"height\", \"mobile\" }`.",
+  "cfg.customDevices": "Tus propios dispositivos: `{ \"id\", \"name\", \"width\", \"height\", \"mobile\" }`. El `id` es lo que pones en `viewkeeper.defaultDevices`; si no lo pones, se forma con el nombre (`custom-<nombre>`).",
   "cfg.relaxCsp": "Quita la cabecera `Content-Security-Policy` de las páginas en vista previa. Hace falta en apps con una política estricta; apágalo para previsualizar con tu política real (la sincronización puede dejar de funcionar).",
   "cfg.fixCookies": "Reescribe las cookies de tu servidor de desarrollo a `SameSite=None; Secure` para que el inicio de sesión siga funcionando dentro del mosaico. Solo afecta a la vista previa, nunca a tu servidor.",
   "cfg.browserPath": "Ruta de Chrome, Edge, Brave o Chromium, usada solo para las capturas. Déjalo vacío para buscar uno automáticamente.",
-  "cap.untrusted": "En espacios de trabajo no fiables se ignora el ajuste de la ruta del navegador y los mosaicos guardados del espacio no se abren solos.",
+  "cap.untrusted": "En espacios de trabajo no fiables, ViewKeeper no usa los valores del espacio de trabajo para `viewkeeper.browserPath` ni `viewkeeper.apiOrigins`.",
   "cap.virtual": "ViewKeeper necesita un servidor de desarrollo local y no funciona en espacios de trabajo virtuales.",
   "cfg.apiOrigins": "Otros orígenes de este equipo a los que llama tu app (una API en otro puerto). ViewKeeper los pasa por su proxy para que vean el origen de tu app. Ejemplo: `http://localhost:3001`."
 }

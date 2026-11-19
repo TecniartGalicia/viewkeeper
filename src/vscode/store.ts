@@ -31,7 +31,7 @@ export async function loadMosaics(folder: vscode.WorkspaceFolder): Promise<Mosai
 /** Guarda o sustituye por nombre. Escribe en un temporal y renombra: un corte no deja medio fichero. */
 export async function saveMosaic(folder: vscode.WorkspaceFolder, mosaic: Mosaic): Promise<void> {
   const clean = parseMosaic(mosaic);
-  if (!clean) throw new Error('mosaico no válido');
+  if (!clean) throw new Error(vscode.l10n.t('This mosaic is not valid.'));
   const all = (await loadMosaics(folder)).filter((m) => m.name !== clean.name);
   all.unshift(clean);
   await write(folder, all.slice(0, MAX_SAVED));

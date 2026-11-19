@@ -22,7 +22,10 @@ export function slug(s: string): string {
 /** `to`: carpeta de destino ya elegida (las pruebas); si no, se pregunta. Devuelve los ficheros guardados. */
 export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (line: string) => void, to?: vscode.Uri): Promise<string[]> {
   const saved: string[] = [];
-  if (host.mosaic().cells.length === 0) return saved;
+  if (host.mosaic().cells.length === 0) {
+    void vscode.window.showInformationMessage(vscode.l10n.t('Add a device first.'));
+    return saved;
+  }
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   const exe = await findBrowser(io, process.platform, process.env, cfg.get<string>('browserPath') || undefined);
   if (!exe) {
@@ -45,7 +48,8 @@ export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (li
           label: d.name,
           // Tique de un solo uso: el testigo del proxy no aparece en la línea de órdenes del navegador.
           url: () => host.proxy.captureUrl(c.session, c.path),
-          out: path.join(tmp, `${slug(mosaic.name)}-${slug(d.name)}-${d.width}x${d.height}-${slug(c.path)}-${c.id}.png`),
+          // Sin la consulta ni el ancla de la ruta: pueden llevar un testigo o un dato personal (como al guardar).
+          out: path.join(tmp, `${slug(mosaic.name)}-${slug(d.name)}-${d.width}x${d.height}-${slug(c.path.split(/[?#]/)[0])}-${c.id}.png`),
           width: d.width,
           height: m?.pageHeight ?? d.height,
           dpr: d.dpr,
@@ -55,6 +59,16 @@ export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (li
         });
       }
       const res = await capture(io, exe, shots, path.join(tmp, 'perfil'));
+      // El panel se cerró mientras se capturaba: el proxy ya no existe y lo que falte no es un fallo que diagnosticar.
+      if (host.isDisposed) {
+        void vscode.window.showInformationMessage(vscode.l10n.t('The mosaic was closed during the capture.'));
+        return;
+      }
+      if (res.ok.length === 0) {
+        for (const s of res.failed) log(`capture failed: ${s.label} (${s.width}×${s.height})`);
+        void vscode.window.showWarningMessage(vscode.l10n.t('{0} capture(s) failed. Run "ViewKeeper: Diagnose" for details.', res.failed.length));
+        return;
+      }
       const groups = [...new Set(shots.map((s) => s.group))];
       const sheet = contactSheet(
         mosaic.name,
@@ -73,7 +87,7 @@ export async function captureMosaic(host: PanelHost, fullPage: boolean, log: (li
         saved.push(target.fsPath);
       }
       const failed = res.failed.length + sheetRes.failed.length;
-      for (const s of [...res.failed, ...sheetRes.failed]) log(`captura fallida: ${s.label} (${s.width}×${s.height})`);
+      for (const s of [...res.failed, ...sheetRes.failed]) log(`capture failed: ${s.label} (${s.width}×${s.height})`);
       const open = vscode.l10n.t('Open folder');
       if (to) return;
       const msg = failed ? vscode.window.showWarningMessage(vscode.l10n.t('{0} capture(s) failed. Run "ViewKeeper: Diagnose" for details.', failed), open) : vscode.window.showInformationMessage(vscode.l10n.t('{0} captures saved.', res.ok.length + sheetRes.ok.length), open);

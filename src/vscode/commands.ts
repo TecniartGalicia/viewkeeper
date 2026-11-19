@@ -51,13 +51,17 @@ async function pickTarget(): Promise<{ origin: string; path: string } | undefine
   return raw === undefined ? undefined : normalizeTarget(raw);
 }
 
+/** En una ventana remota dice por qué no y devuelve true. Se mira al empezar cada comando, antes de preguntar nada. */
+function remote(): boolean {
+  if (!vscode.env.remoteName) return false;
+  void vscode.window.showWarningMessage(t('ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.', vscode.env.remoteName));
+  return true;
+}
+
 async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void> {
   // En una ventana remota (WSL, SSH, contenedor, Codespaces) el proxy corre en la otra máquina y las celdas,
   // que se pintan en esta, no lo alcanzan: mejor decirlo que abrir un panel en blanco (P-46).
-  if (vscode.env.remoteName) {
-    void vscode.window.showWarningMessage(t('ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.', vscode.env.remoteName));
-    return;
-  }
+  if (remote()) return;
   const capped = capCells(mosaic.cells);
   if (capped.dropped > 0) void vscode.window.showWarningMessage(t('A mosaic holds up to {0} cells; the rest were left out.', MAX_CELLS));
   const next: Mosaic = { ...mosaic, cells: capped.cells };
@@ -66,7 +70,7 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void>
   // La lista puede venir escrita en los ajustes del repositorio: cada origen se comprueba antes de usarlo (N-6).
   const declared = (cfg.get<string[]>('apiOrigins') ?? []).filter((o) => typeof o === 'string' && isLoopback(o)).slice(0, 8);
   const trusted = (await Promise.all(declared.map(async (o) => ((await apiTrustsApp(o, next.target)) ? o : undefined)))).filter((o): o is string => o !== undefined);
-  for (const o of declared) if (!trusted.includes(o)) out.warn(`apiOrigins: ${o} no admite por CORS a ${next.target}; no se pasa por el proxy`);
+  for (const o of declared) if (!trusted.includes(o)) out.warn(`apiOrigins: ${o} does not allow ${next.target} by CORS; not routed through the proxy`);
   current = await PanelHost.open(ctx, next, {
     customDevices: customDevices(),
     log: (l) => out.info(l),
@@ -74,7 +78,7 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void>
     onHint: (origin) => void offerApi(ctx, origin),
   });
   const host = current;
-  out.info(`mosaico abierto: ${next.target}, ${next.cells.length} celdas, proxy en el puerto ${host.proxy.port}`);
+  out.info(`mosaic open: ${next.target}, ${next.cells.length} cells, proxy on port ${host.proxy.port}`);
   host.panel.onDidDispose(() => {
     if (current === host) current = undefined;
     void vscode.commands.executeCommand('setContext', 'viewkeeper.open', current !== undefined);
@@ -84,16 +88,23 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void>
 
 const offered = new Set<string>();
 /** La app llama a otro puerto de esta máquina y el navegador lo bloquea: se ofrece pasarlo por el proxy. */
-async function offerApi(ctx: vscode.ExtensionContext, origin: string): Promise<void> {
+async function offerApi(ctx: vscode.ExtensionContext, raw: string): Promise<void> {
+  let origin: string;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    return;
+  }
   if (offered.has(origin) || !isLoopback(origin) || !current) return;
   offered.add(origin);
   // El aviso viene de la página, y una página puede fabricarlo: solo se ofrece si la API ya se fía de esta app.
   if (!(await apiTrustsApp(origin, current.mosaic().target))) {
-    out.info(`la página llamó a ${origin} y falló; no se ofrece pasarlo por el proxy porque no admite por CORS a ${current.mosaic().target}`);
+    out.info(`the page called ${origin} and failed; not offering to route it because it does not allow ${current.mosaic().target} by CORS`);
     return;
   }
   const yes = t('Yes');
-  const pick = await vscode.window.showInformationMessage(t('Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper?', origin), yes, t('No'));
+  const where = folder() ? t('this workspace') : t('your user settings');
+  const pick = await vscode.window.showInformationMessage(t('Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper? It will be saved in "viewkeeper.apiOrigins" of {1}.', origin, where), yes, t('No'));
   if (pick !== yes || !current) return;
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   const list = [...new Set([...(cfg.get<string[]>('apiOrigins') ?? []), origin])];
@@ -102,6 +113,7 @@ async function offerApi(ctx: vscode.ExtensionContext, origin: string): Promise<v
 }
 
 async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
+  if (remote()) return;
   // Con un mosaico abierto, el botón de la barra de estado lo trae al frente en vez de abrir otro.
   if (current) {
     current.panel.reveal();
@@ -114,6 +126,7 @@ async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
 
 /** Elegir rutas del proyecto y dispositivos, y abrir la matriz: una fila por ruta, una columna por dispositivo. */
 async function openMatrix(ctx: vscode.ExtensionContext): Promise<void> {
+  if (remote()) return;
   const target = current ? { origin: current.mosaic().target, path: '/' } : await pickTarget();
   if (!target) return;
   const base = folder();
@@ -166,8 +179,13 @@ async function openMatrix(ctx: vscode.ExtensionContext): Promise<void> {
 
 /** Una celda más con otra sesión, para ver la misma pantalla con otro usuario. */
 async function addSessionCmd(): Promise<void> {
-  if (!current) return;
-  const m = current.mosaic();
+  const host = current;
+  if (!host) return;
+  const m = host.mosaic();
+  if (m.cells.length === 0) {
+    void vscode.window.showInformationMessage(t('Add a device first.'));
+    return;
+  }
   const used = new Set(m.cells.map((c) => c.session));
   const name = await vscode.window.showInputBox({
     title: t('Session name'),
@@ -175,33 +193,39 @@ async function addSessionCmd(): Promise<void> {
     placeHolder: 'admin',
     validateInput: (v) => (!isValidSession(v) ? t('Lowercase letters and digits only.') : used.has(v) ? t('That session is already open.') : undefined),
   });
-  if (!name) return;
-  const next = addSession(m, name);
+  if (!name || host.isDisposed) return;
+  const next = addSession(host.mosaic(), name);
   if (!next) {
     void vscode.window.showWarningMessage(t('A mosaic holds up to {0} cells; the rest were left out.', MAX_CELLS));
     return;
   }
-  current.apply(next);
+  host.apply(next);
 }
 
 async function save(): Promise<void> {
   const f = folder();
-  if (!current) return;
+  const host = current;
+  if (!host) return;
   if (!f) {
     void vscode.window.showInformationMessage(t('Open a folder to save mosaics with your project.'));
     return;
   }
-  const m = current.mosaic();
+  const m = host.mosaic();
+  if (m.cells.length === 0) {
+    void vscode.window.showInformationMessage(t('Add a device first.'));
+    return;
+  }
   const name = await vscode.window.showInputBox({ title: t('Name for this mosaic'), value: m.name, validateInput: (v) => (v.trim() === '' ? t('Give it a name.') : undefined) });
   if (!name) return;
   // El fichero va a git: se guarda la ruta sin su consulta ni su ancla, que pueden llevar un testigo o un dato personal.
   const cells = m.cells.map((c) => ({ ...c, path: c.path.split(/[?#]/)[0] || '/' }));
   await saveMosaic(f, { ...m, cells, name: name.trim() });
-  current.apply({ ...current.mosaic(), name: name.trim() });
+  if (!host.isDisposed) host.apply({ ...host.mosaic(), name: name.trim() });
   void vscode.window.showInformationMessage(t('Saved to .vscode/viewkeeper.json'));
 }
 
 async function openSaved(ctx: vscode.ExtensionContext): Promise<void> {
+  if (remote()) return;
   const f = folder();
   if (!f) {
     void vscode.window.showInformationMessage(t('Open a folder to save mosaics with your project.'));
@@ -238,7 +262,7 @@ async function openSaved(ctx: vscode.ExtensionContext): Promise<void> {
 /** Diagnóstico: lo que el proxy ha visto y lo que no pudo hacer. No incluye cuerpos ni cookies. */
 function doctor(): void {
   if (current) for (const line of current.diagnostics()) out.info(line);
-  else out.info('ningún mosaico abierto');
+  else out.info('no mosaic open');
   out.show(true);
 }
 

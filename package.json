@@ -144,23 +144,23 @@
       "commandPalette": [
         {
           "command": "viewkeeper.reload",
-          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+          "when": "viewkeeper.open"
         },
         {
           "command": "viewkeeper.addSession",
-          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+          "when": "viewkeeper.open"
         },
         {
           "command": "viewkeeper.save",
-          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+          "when": "viewkeeper.open"
         },
         {
           "command": "viewkeeper.capture",
-          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+          "when": "viewkeeper.open"
         },
         {
           "command": "viewkeeper.captureFullPage",
-          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+          "when": "viewkeeper.open"
         }
       ]
     },
@@ -190,6 +190,10 @@
               "height"
             ],
             "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+              },
               "name": {
                 "type": "string"
               },
@@ -214,7 +218,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^https?://(localhost|127.0.0.1|[::1])(:d+)?$"
+            "pattern": "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?$"
           },
           "default": [],
           "scope": "resource",

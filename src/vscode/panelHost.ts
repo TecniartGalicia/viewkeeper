@@ -74,8 +74,6 @@ export class PanelHost implements vscode.Disposable {
   private readonly fixCookies: boolean;
   private readonly sonda: boolean;
   private readonly extensionUri: vscode.Uri;
-  /** Orígenes que la política del webview deja incrustar ahora mismo. */
-  private allowed = new Set<string>();
   private readonly paths = new Map<string, string>();
   private readonly misses = new Map<string, number>();
   private readonly waiters = new Map<number, (data: unknown) => void>();
@@ -97,8 +95,11 @@ export class PanelHost implements vscode.Disposable {
 
   static async open(ctx: vscode.ExtensionContext, input: Mosaic, opts: HostOptions = {}): Promise<PanelHost> {
     // Todo mosaico pasa por el validador, venga de donde venga: las sesiones acaban en un nombre de host y en la CSP.
-    const mosaic = parseMosaic(input) ?? (input.cells.length === 0 ? emptyMosaic(input) : undefined);
-    if (!mosaic) throw new Error('mosaico no válido');
+    const parsed = parseMosaic(input) ?? (input.cells.length === 0 ? emptyMosaic(input) : undefined);
+    if (!parsed) throw new Error(vscode.l10n.t('This mosaic is not valid.'));
+    const unknown = [...new Set(parsed.cells.filter((c) => !findDevice(c.deviceId, opts.customDevices)).map((c) => c.deviceId))];
+    const mosaic: Mosaic = { ...parsed, cells: parsed.cells.map((c) => (findDevice(c.deviceId, opts.customDevices) ? c : { ...c, deviceId: 'laptop', landscape: false })) };
+    if (unknown.length) void vscode.window.showWarningMessage(vscode.l10n.t('This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to "viewkeeper.customDevices".', unknown.join(', ')));
     let agentSource = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'agent.js'), 'utf8');
     if (opts.sonda) agentSource = agentSource.replace('/*SONDA-INICIO*/', opts.sonda.inicio).replace('/*SONDA*/', opts.sonda.pregunta);
     const proxy = await startProxy({ target: mosaic.target, agentSource, log: opts.log, ...opts.proxy });
@@ -122,6 +123,8 @@ export class PanelHost implements vscode.Disposable {
       this.postState();
     } else if (m.t === 'where' && typeof m.cell === 'string' && typeof m.path === 'string') {
       this.paths.set(m.cell, m.path);
+    } else if (m.t === 'pick') {
+      void this.pickDevice(typeof m.cell === 'string' ? m.cell : undefined);
     } else if (m.t === 'edit') {
       this.apply(applyEdit(this.mosaic(), m.edit, (id) => findDevice(id, this.customDevices) !== undefined));
     } else if (m.t === 'command' && typeof m.command === 'string' && PANEL_COMMANDS.has(m.command)) {
@@ -134,7 +137,7 @@ export class PanelHost implements vscode.Disposable {
     } else if (m.t === 'miss' && typeof m.cell === 'string') {
       this.misses.set(m.cell, (this.misses.get(m.cell) ?? 0) + 1);
     } else if (m.t === 'trip') {
-      opts.log?.(`navegación en bucle en la fila ${m.group}: sincronización de navegación en pausa`);
+      opts.log?.(`row ${m.group}: cells kept navigating each other, navigation sync paused`);
     } else if (m.t === 'fromCell' && m.cell && m.ev && this.sonda) {
       this.events.push({ at: Date.now(), cell: m.cell, ev: m.ev });
       if (m.ev.t === 'answer') {
@@ -170,11 +173,9 @@ export class PanelHost implements vscode.Disposable {
     void this.panel.webview.postMessage({ t: 'state', state: this.state() });
   }
 
-  /** La política del webview nombra los orígenes de las sesiones; con una sesión nueva hay que reescribirla. */
+  /** Se escribe una vez: la política admite cualquier sesión de ESTE proxy (http://*.localhost:<su puerto>). */
   private writeHtml(): void {
-    this.allowed = new Set(this.views().map((c) => c.origin));
-    this.allowed.add(this.proxy.originFor('main'));
-    this.panel.webview.html = html(this.panel.webview, this.extensionUri, [...this.allowed]);
+    this.panel.webview.html = html(this.panel.webview, this.extensionUri, `http://*.localhost:${this.proxy.port}`);
   }
 
   /** Sustituye el mosaico del panel. Las celdas que siguen igual no se recargan. */
@@ -185,10 +186,23 @@ export class PanelHost implements vscode.Disposable {
     for (const id of [...this.paths.keys()]) if (!valid.cells.some((c) => c.id === id)) this.paths.delete(id);
     this.model = valid;
     this.panel.title = `ViewKeeper · ${valid.name}`;
-    const origins = this.views().map((c) => c.origin);
-    if (origins.some((o) => !this.allowed.has(o))) this.writeHtml();
-    else this.postState();
+    this.postState();
     this.changed.fire(this.mosaic());
+  }
+
+  /** Selector de dispositivo: para cambiar el de una celda o, sin celda, para añadir una. */
+  private async pickDevice(cell: string | undefined): Promise<void> {
+    const current = cell ? this.model.cells.find((c) => c.id === cell) : undefined;
+    if (cell && !current) return;
+    const items = [...DEVICES, ...this.customDevices].map((d) => ({ label: d.name, description: `${d.width}×${d.height}`, id: d.id, picked: d.id === current?.deviceId }));
+    const choice = await vscode.window.showQuickPick(items, { title: cell ? vscode.l10n.t('Device for this cell') : vscode.l10n.t('Add device') });
+    if (!choice || this.disposed) return;
+    const known = (id: string): boolean => findDevice(id, this.customDevices) !== undefined;
+    this.apply(applyEdit(this.mosaic(), cell ? { op: 'device', cell, deviceId: choice.id } : { op: 'add', deviceId: choice.id }, known));
+  }
+
+  get isDisposed(): boolean {
+    return this.disposed;
   }
 
   /** El mosaico tal como está ahora: cada celda en la ruta a la que se haya navegado. */
@@ -227,7 +241,7 @@ export class PanelHost implements vscode.Disposable {
   }
 
   diagnostics(): string[] {
-    const miss = [...this.misses].map(([cell, n]) => `celda ${cell}: ${n} acciones no reproducidas (el elemento no era el mismo en ese ancho)`);
+    const miss = [...this.misses].map(([cell, n]) => `cell ${cell}: ${n} actions not replayed (the element was not the same at that width)`);
     return [...this.proxy.diagnostics(), ...miss];
   }
 
@@ -246,12 +260,12 @@ function emptyMosaic(m: Mosaic): Mosaic | undefined {
   return probe ? { ...probe, cells: [] } : undefined;
 }
 
-function html(webview: vscode.Webview, extensionUri: vscode.Uri, frameOrigins: string[]): string {
+function html(webview: vscode.Webview, extensionUri: vscode.Uri, frameSource: string): string {
   const nonce = randomBytes(16).toString('base64');
   const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'panel.js'));
-  // La política solo deja incrustar los orígenes del proxy de ESTE panel, y ejecutar NUESTRO script.
-  // Los orígenes salen de sesiones ya validadas ([a-z0-9]), así que no pueden colar directivas.
-  const csp = `default-src 'none'; frame-src ${frameOrigins.join(' ')}; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src data:`;
+  // La política solo deja incrustar el proxy de ESTE panel (su puerto, cualquier sesión), y ejecutar NUESTRO script.
+  // El puerto es un número que da el sistema: no puede colar directivas.
+  const csp = `default-src 'none'; frame-src ${frameSource}; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src data:`;
   return `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -278,9 +292,9 @@ const CSS = `
   .vacio { padding: 40px 12px; text-align: center; opacity: .8; }
   figure { margin: 0; flex: none; }
   figcaption { display: flex; align-items: center; gap: 4px; padding: 0 0 6px; white-space: nowrap; min-height: 26px; }
-  figcaption select { padding: 1px 4px; max-width: 150px; flex: none; }
+  button.disp { padding: 2px 6px; max-width: 150px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, transparent); }
   figure.estrecha .dim { display: none; }
-  figure.estrecha figcaption select { max-width: 112px; }
+  figure.estrecha button.disp { max-width: 112px; }
   figcaption .acc { margin-left: auto; display: inline-flex; }
   figcaption .dim { opacity: .7; }
   figcaption .ruta { opacity: .85; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; max-width: 220px; }

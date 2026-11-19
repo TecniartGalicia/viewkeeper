@@ -264,7 +264,7 @@ test('P-14 servidor caído: la celda recibe una página que se reintenta sola, n
     const r = await get('/', { proxy: solo });
     assert.equal(r.status, 502);
     assert.match(r.body, /http-equiv="refresh"/);
-    assert.ok(solo.diagnostics().some((l) => l.includes('sin respuesta de http://localhost:9')));
+    assert.ok(solo.diagnostics().some((l) => l.includes('no answer from http://localhost:9')));
   } finally {
     await solo.close();
   }

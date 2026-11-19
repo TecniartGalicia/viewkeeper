@@ -349,3 +349,52 @@ test('P-37 colocación por filas: misma altura, cabe en el ancho, nunca amplía'
   assert.equal(rowScales(Array(12).fill(l), 300, 600, 14).length, 12);
   assert.deepEqual(rowScales([], 1000, 1000, 14), []);
 });
+
+test('P-38 auditoría F2-F3 en el núcleo: H1, B1, B4, B7, B11', () => {
+  // H1: tres dispositivos en un editor partido en dos (700 px) siguen siendo legibles; la fila se parte en líneas.
+  const tres = ['iphone-15', 'ipad-mini', 'laptop'].map((id) => findDevice(id)!);
+  for (const ancho of [700, 760, 900]) {
+    const s = rowScales(tres, ancho, 600, 14, 230);
+    const altos = tres.map((d, i) => Math.round(d.height * s[i]));
+    assert.ok(Math.min(...altos) >= 239, `a ${ancho} px: ${altos}`);
+  }
+  assert.ok(Math.round(852 * rowScales([tres[0]], 300, 150, 14)[0]) <= 150, 'con poco alto manda el alto disponible');
+  const doce = rowScales(Array(12).fill(tres[2]), 900, 600, 14, 230);
+  assert.ok(doce.every((x) => Math.round(768 * x) >= 239));
+  // B1: ids de dispositivos propios
+  assert.equal(parseCustomDevice({ name: 'Móvil', width: 360, height: 800 })?.id, 'custom-movil');
+  assert.equal(parseCustomDevice({ id: 'kiosko-1', name: 'x', width: 1080, height: 1920 })?.id, 'kiosko-1');
+  assert.equal(parseCustomDevice({ id: 'NO VALE', name: 'Kiosko', width: 1080, height: 1920 })?.id, 'custom-kiosko');
+  const a = parseCustomDevice({ name: '手机', width: 360, height: 800 })!.id;
+  const b = parseCustomDevice({ name: 'タブレット', width: 800, height: 1280 })!.id;
+  assert.ok(a !== b && a.startsWith('custom-') && a.length > 'custom-'.length, `${a} / ${b}`);
+  // B7: sin la fila 0, «añadir» va a la fila de la primera celda
+  const known = (id: string): boolean => DEVICES.some((d) => d.id === id);
+  const sinFila0 = { v: 1 as const, name: 'x', target: 'http://localhost:1', sync: SYNC_ALL, cells: matrix(['/a', '/b'], ['laptop']).filter((c) => c.group === 1) };
+  assert.deepEqual([applyEdit(sinFila0, { op: 'add', deviceId: 'iphone-15' }, known).cells.at(-1)?.group, applyEdit(sinFila0, { op: 'add', deviceId: 'iphone-15' }, known).cells.at(-1)?.path], [1, '/b']);
+  // B11: segmento opcional vacío
+  assert.equal(fillRoute('/docs/[[...slug]]', {}), '/docs');
+  assert.equal(fillRoute('/docs/[[...slug]]', { slug: 'a/b' }), '/docs/a/b');
+  assert.equal(fillRoute('/[[...slug]]', {}), '/');
+  assert.equal(fillRoute('/blog/[slug]', { slug: '' }), undefined);
+  // B4: un estado nuevo no rearma; recargar sí. Y due() no manda nada a una fila en pausa.
+  const r = new SyncRouter([C('a'), C('b')], SYNC_ALL, () => 1);
+  r.route('a', { t: 'hello', url: U('/') });
+  r.route('b', { t: 'hello', url: U('/') });
+  let t0 = 1;
+  const rr = new SyncRouter([C('a'), C('b')], SYNC_ALL, () => t0);
+  rr.route('a', { t: 'hello', url: U('/') });
+  rr.route('b', { t: 'hello', url: U('/') });
+  for (let i = 0; i < 12; i++) {
+    t0 += 50;
+    rr.route('a', { t: 'gesture' });
+    rr.route('a', { t: 'nav', url: U('/p' + i) });
+    rr.route('b', { t: 'ready', url: U('/p' + i), title: '', height: 1 });
+  }
+  assert.ok(rr.isTripped(0));
+  rr.update([C('a'), C('b')], { ...SYNC_ALL, scroll: false });
+  assert.ok(rr.isTripped(0), 'pulsar un interruptor no rearma');
+  rr.rearm();
+  assert.ok(!rr.isTripped(0), 'recargar sí');
+  void r;
+});

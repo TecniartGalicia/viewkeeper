@@ -59,13 +59,16 @@ export function detectRoutes(files: readonly string[]): Route[] {
 /** Sustituye los segmentos dinámicos por los valores que dio el usuario: /blog/[slug] + {slug:'hola'} → /blog/hola */
 export function fillRoute(path: string, values: Readonly<Record<string, string>>): string | undefined {
   let ok = true;
-  const out = path.replace(/\[\[?\.{0,3}([^\]]+)\]\]?/g, (_all, name: string) => {
+  const out = path.replace(/\[\[?\.{0,3}([^\]]+)\]\]?/g, (all: string, name: string) => {
     const v = values[name];
     if (v === undefined || v === '') {
-      ok = false;
+      // [[...slug]] es opcional: vacío es válido y quita el segmento.
+      if (!all.startsWith('[[')) ok = false;
       return '';
     }
     return v.split('/').map(encodeURIComponent).join('/');
   });
-  return ok ? out : undefined;
+  if (!ok) return undefined;
+  const clean = out.replace(/\/{2,}/g, '/');
+  return clean.length > 1 && clean.endsWith('/') ? clean.slice(0, -1) : clean;
 }

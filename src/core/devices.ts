@@ -46,8 +46,15 @@ export function parseCustomDevice(raw: unknown): Device | undefined {
   const h = Number(r.height);
   if (typeof r.name !== 'string' || r.name.trim() === '') return undefined;
   if (!Number.isInteger(w) || !Number.isInteger(h) || w < 200 || h < 200 || w > 7680 || h > 7680) return undefined;
-  const id = 'custom-' + r.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  return { id, name: r.name.trim(), width: w, height: h, dpr: 1, mobile: r.mobile === true };
+  const name = r.name.trim().slice(0, 40);
+  let id: string;
+  if (typeof r.id === 'string' && /^[a-z0-9][a-z0-9-]{0,39}$/.test(r.id)) id = r.id;
+  else {
+    const slug = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
+    // Un nombre sin letras latinas («手机») no deja nada: se usa un resumen del nombre para que no choquen.
+    id = 'custom-' + (slug || [...name].reduce((h, ch) => (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0, 7).toString(36));
+  }
+  return { id, name, width: w, height: h, dpr: 1, mobile: r.mobile === true };
 }
 
 /**
@@ -65,6 +72,9 @@ export function fitScale(d: Pick<Device, 'width' | 'height'>, boxW: number, boxH
  * ancho disponible, sin ampliar ninguna por encima del 100 %. Cada celda ocupa al menos `minWidth` (su rótulo
  * tiene que caber). Así un portátil no se queda diminuto al lado de un móvil, y se comparan a la misma altura.
  */
+/** Alto mínimo en pantalla de una celda: por debajo no se lee nada. Si no cabe, la fila se parte en líneas. */
+export const MIN_ROW_HEIGHT = 240;
+
 export function rowScales(sizes: readonly Pick<Device, 'width' | 'height'>[], availW: number, availH: number, gap: number, minWidth = 190): number[] {
   if (sizes.length === 0) return [];
   const room = Math.max(1, availW - gap * (sizes.length - 1));
@@ -80,5 +90,7 @@ export function rowScales(sizes: readonly Pick<Device, 'width' | 'height'>[], av
       else hi = mid;
     }
   }
-  return sizes.map((d) => Math.max(0.05, Math.round(Math.min(lo / d.height, 1) * 1000) / 1000));
+  // H1 de la auditoría: sin este suelo, tres dispositivos en un editor partido en dos bajaban a 40 px de alto.
+  const h = Math.max(lo, Math.min(availH, MIN_ROW_HEIGHT));
+  return sizes.map((d) => Math.max(0.05, Math.round(Math.min(h / d.height, 1) * 1000) / 1000));
 }

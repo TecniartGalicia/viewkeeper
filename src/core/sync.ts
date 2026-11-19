@@ -114,7 +114,6 @@ export class SyncRouter {
       this.expect.delete(id);
       this.replayedAt.delete(id);
     }
-    this.rearm();
   }
 
   /** Vuelve a sincronizar la navegación de todas las filas. Lo llama el panel al recargar. */
@@ -145,7 +144,8 @@ export class SyncRouter {
     for (const [id, e] of [...this.expect]) {
       if (t < e.at) continue;
       this.expect.delete(id);
-      if (!this.cells.some((c) => c.id === id)) continue;
+      const c = this.cells.find((x) => x.id === id);
+      if (!c || !this.opts.nav || this.isTripped(c.group)) continue;
       const at = this.where.get(id);
       if (at !== undefined && pageKey(at) === pageKey(e.path)) continue; // llegó sola
       this.pending.set(id, { since: t, path: e.path });

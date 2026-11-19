@@ -402,7 +402,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         const encoded = enc !== undefined && enc !== 'identity';
         // Solo se inyecta en HTML que se pidió como documento, con cuerpo, y que sabemos leer.
         const injecting = html && type.includes('text/html') && req.method === 'GET' && status !== 204 && status !== 304 && (!encoded || dec !== null);
-        if (html && type.includes('text/html') && encoded && dec === null) note(`sin agente en ${path}: codificación ${enc} desconocida`);
+        if (html && type.includes('text/html') && encoded && dec === null) note(`no agent in ${path}: unknown content-encoding ${enc}`);
         const outHeaders = rewriteResponseHeaders(ur.headers, ctx, { relaxCsp, fixCookies, injecting });
         if (apiPrefix !== undefined && typeof ur.headers.location === 'string') {
           // Una redirección de la API (la barra final, por ejemplo) tiene que volver al paso, no a la app (N-4).
@@ -433,7 +433,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     });
     up.on('error', (e) => {
       if (res.destroyed) return;
-      note(`sin respuesta de ${dest.origin}${path.split('?')[0]}: ${e.message}`);
+      note(`no answer from ${dest.origin}${path.split('?')[0]}: ${e.message}`);
       if (res.headersSent) {
         res.destroy();
         return;
@@ -485,7 +485,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       handle(req, res);
     } catch (e) {
       // Ninguna petición rara debe dejar una conexión colgada ni tirar el host de la extensión. (H-11)
-      note(`error interno: ${(e as Error).message}`);
+      note(`internal error: ${(e as Error).message}`);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
       res.end();
     }
@@ -567,7 +567,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         setPanelOrigin: (o) => {
           panelOrigin = o;
         },
-        diagnostics: () => [`destino ${target.origin} · puerto ${port} · sesiones con cookies: ${[...seenCookies].filter(([, j]) => j.size > 0).map(([s]) => s).join(', ') || 'ninguna'}`, ...notes],
+        diagnostics: () => [`target ${target.origin} · proxy port ${port} · sessions with cookies: ${[...seenCookies].filter(([, j]) => j.size > 0).map(([s]) => s).join(', ') || 'none'}`, ...notes],
         close: () =>
           new Promise<void>((done) => {
             for (const s of sockets) s.destroy();

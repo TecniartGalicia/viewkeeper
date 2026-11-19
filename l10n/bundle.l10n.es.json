@@ -12,7 +12,6 @@
   "Not a valid http(s) address.": "No es una dirección http(s) válida.",
   "A mosaic holds up to {0} cells; the rest were left out.": "Un mosaico admite hasta {0} celdas; el resto se quedó fuera.",
   "Yes": "Sí",
-  "Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper?": "Tu app llama a {0} y el navegador lo bloquea dentro del mosaico. ¿Lo paso por ViewKeeper?",
   "No": "No",
   "Type a route…": "Escribir una ruta…",
   "needs a value": "necesita un valor",
@@ -51,5 +50,13 @@
   "Remove": "Quitar",
   "No cells. Add a device to start.": "No hay celdas. Añade un dispositivo para empezar.",
   "session": "sesión",
-  "ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.": "Por ahora ViewKeeper funciona en ventanas locales. En una ventana remota ({0}) las celdas no llegan a tu servidor de desarrollo."
+  "ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.": "Por ahora ViewKeeper funciona en ventanas locales. En una ventana remota ({0}) las celdas no llegan a tu servidor de desarrollo.",
+  "This mosaic is not valid.": "Este mosaico no es válido.",
+  "This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to \"viewkeeper.customDevices\".": "Este mosaico usa dispositivos que este equipo no tiene ({0}); se muestran como Laptop. Añádelos en \"viewkeeper.customDevices\".",
+  "Device for this cell": "Dispositivo de esta celda",
+  "this workspace": "este espacio de trabajo",
+  "your user settings": "tus ajustes de usuario",
+  "Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper? It will be saved in \"viewkeeper.apiOrigins\" of {1}.": "Tu app llama a {0} y el navegador lo bloquea dentro del mosaico. ¿Lo paso por ViewKeeper? Se guardará en \"viewkeeper.apiOrigins\" de {1}.",
+  "Add a device first.": "Añade antes un dispositivo.",
+  "The mosaic was closed during the capture.": "El mosaico se cerró durante la captura."
 }
