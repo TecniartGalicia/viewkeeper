@@ -9,6 +9,8 @@ const builds = tests
   ? [
       // La sonda que VS Code carga con --extensionTestsPath. Nunca entra en el paquete (out/ está en .vscodeignore).
       { entryPoints: ['test/integration/sonda.ts'], bundle: true, format: 'cjs', platform: 'node', target: 'node20', outfile: 'out/sonda.js', external: ['vscode'], logLevel: 'info' },
+      // La sonda de ventana remota (test/integration/run-remoto.ts): corre en el host de extensiones de WSL.
+      { entryPoints: ['test/integration/sonda-remota.ts'], bundle: true, format: 'cjs', platform: 'node', target: 'node20', outfile: 'out/sonda-remota.js', external: ['vscode'], logLevel: 'info' },
     ]
   : [
       { entryPoints: ['src/extension.ts'], bundle: true, format: 'cjs', platform: 'node', target: 'node20', outfile: 'dist/extension.js', external: ['vscode'], sourcemap: !production, minify: production, logLevel: 'info' },

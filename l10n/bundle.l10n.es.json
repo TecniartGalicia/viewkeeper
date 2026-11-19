@@ -48,7 +48,6 @@
   "Remove": "Quitar",
   "No cells. Add a device to start.": "No hay celdas. Añade un dispositivo para empezar.",
   "session": "sesión",
-  "ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.": "Por ahora ViewKeeper funciona en ventanas locales. En una ventana remota ({0}) las celdas no llegan a tu servidor de desarrollo.",
   "This mosaic is not valid.": "Este mosaico no es válido.",
   "This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to \"viewkeeper.customDevices\".": "Este mosaico usa dispositivos que este equipo no tiene ({0}); se muestran como Laptop. Añádelos en \"viewkeeper.customDevices\".",
   "Device for this cell": "Dispositivo de esta celda",
@@ -83,5 +82,6 @@
   "Go to this route": "Ir a esta ruta",
   "Reopen {0}": "Reabrir {0}",
   "Outside the mosaic, not opened": "Fuera del mosaico, no se ha abierto",
-  "It is on another server: those calls will go out from this computer with the origin of your app, with the cookies that server sets and the ones your app set for its domain.": "Está en otro servidor: esas llamadas saldrán de este ordenador con el origen de tu app, con las cookies que ponga ese servidor y las que tu app haya puesto para su dominio."
+  "It is on another server: those calls will go out from this computer with the origin of your app, with the cookies that server sets and the ones your app set for its domain.": "Está en otro servidor: esas llamadas saldrán de este ordenador con el origen de tu app, con las cookies que ponga ese servidor y las que tu app haya puesto para su dominio.",
+  "ViewKeeper cannot open a mosaic in this window: its cells need the preview on a local port, and from here it is only reachable through another domain.": "ViewKeeper no puede abrir un mosaico en esta ventana: sus celdas necesitan la vista previa en un puerto de este ordenador, y desde aquí solo se llega a ella por otro dominio."
 }

@@ -429,3 +429,48 @@ test('P-68 a quién se le ofrece pasar por el proxy: en esta máquina vale «*»
   assert.equal(await apiTrustsApp('https://u:c@api.ejemplo.org', 'https://app.ejemplo.org', 300), false);
   assert.equal(await apiTrustsApp('nada', 'https://app.ejemplo.org', 300), false);
 });
+
+// ───────────────────────── Fase D
+
+test('P-69 ventana remota: las celdas entran por el puerto reenviado, y el proxy acepta ese y el suyo, ningún otro', async () => {
+  const app = await fake((req, res, self) => {
+    if (req.url === '/redir') return void res.writeHead(302, { location: `${self.origin}/destino` }).end();
+    if (req.url === '/eco') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ origin: req.headers.origin ?? null, referer: req.headers.referer ?? null }));
+    html(res, 'app');
+  });
+  const px = await startProxy({ target: app.origin, agentSource: '/*A*/' });
+  const FUERA = px.port === 45000 ? 45001 : 45000; // el puerto de esta máquina por el que VS Code reenvía
+  const por = (puerto: number, ruta: string, extra: Record<string, string> = {}): Promise<Res> => cell(px, ruta, { headers: { host: `s-main-${px.tag}.localhost:${puerto}`, ...extra } });
+  try {
+    // Sin reenvío: como siempre.
+    assert.equal(px.shownPort(), px.port);
+    assert.equal((await por(FUERA, '/')).status, 421, 'antes de anunciarlo, el puerto de fuera no es nadie');
+    px.setPublicPort(FUERA);
+    assert.equal(px.shownPort(), FUERA);
+    assert.equal(px.originFor('admin'), `http://s-admin-${px.tag}.localhost:${FUERA}`, 'las celdas ven el puerto de esta máquina');
+    assert.ok(px.entryUrl('main', '/x').startsWith(`http://s-main-${px.tag}.localhost:${FUERA}/`));
+    // La captura la hace un navegador de la máquina del proxy: entra por el puerto propio.
+    assert.ok(px.captureUrl('main', '/x').startsWith(`http://s-main-${px.tag}.localhost:${px.port}/`));
+    assert.equal((await por(FUERA, '/')).status, 200);
+    assert.equal((await por(px.port, '/')).status, 200);
+    assert.equal((await por(FUERA + 7, '/')).status, 421, 'cualquier otro puerto en el Host se rechaza (defensa contra DNS rebinding)');
+    // Lo que la página tiene por su origen es aquel por el que entró: una redirección vuelve a él…
+    assert.equal((await por(FUERA, '/redir')).headers.location, `http://s-main-${px.tag}.localhost:${FUERA}/destino`);
+    assert.equal((await por(px.port, '/redir')).headers.location, `http://s-main-${px.tag}.localhost:${px.port}/destino`);
+    // …y el servidor de la app ve el suyo como Origin y Referer, entre por donde entre.
+    for (const p of [FUERA, px.port]) {
+      const o = `http://s-main-${px.tag}.localhost:${p}`;
+      const eco = JSON.parse((await por(p, '/eco', { 'sec-fetch-dest': 'empty', origin: o, referer: `${o}/pagina` })).body) as { origin: string; referer: string };
+      assert.deepEqual(eco, { origin: app.origin, referer: `${app.origin}/pagina` }, `por el puerto ${p}`);
+    }
+    // Un puerto que no lo es, o el propio: se queda sin reenvío.
+    px.setPublicPort(px.port);
+    assert.equal(px.shownPort(), px.port);
+    px.setPublicPort(70000);
+    assert.equal(px.shownPort(), px.port);
+    assert.equal((await por(FUERA, '/')).status, 421);
+  } finally {
+    await px.close();
+    await app.close();
+  }
+});

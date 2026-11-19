@@ -133,7 +133,6 @@ async function pickTarget(reopen?: Mosaic): Promise<Target | Mosaic | undefined>
 
 /** Abrir una dirección cualquiera, haya o no un mosaico abierto (lo sustituye, con sus dispositivos). */
 async function openUrl(ctx: vscode.ExtensionContext): Promise<void> {
-  if (remote()) return;
   const now = current?.mosaic();
   const rows = now ? [...new Set(now.cells.map((c) => c.group))].sort((a, b) => a - b) : [];
   // Una fila: se propone la dirección con la ruta que enseña. Una matriz: solo el origen (cada fila tiene la suya).
@@ -150,11 +149,19 @@ async function openUrl(ctx: vscode.ExtensionContext): Promise<void> {
   await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells, sync });
 }
 
-/** En una ventana remota dice por qué no y devuelve true. Se mira al empezar cada comando, antes de preguntar nada. */
-function remote(): boolean {
-  if (!vscode.env.remoteName) return false;
-  void vscode.window.showWarningMessage(t('ViewKeeper works in local windows for now. In a remote window ({0}) the cells cannot reach your dev server.', vscode.env.remoteName));
-  return true;
+/**
+ * En una ventana remota (WSL, SSH, contenedor) la extensión, el proxy y el servidor de desarrollo corren en la
+ * otra máquina, y las celdas se pintan en esta. VS Code trae el puerto del proxy a un puerto local: las celdas
+ * entran por él. Si lo que devuelve no es un puerto de esta máquina (VS Code en el navegador: sale por otro
+ * dominio), no hay «*.localhost» que valga y se dice.
+ */
+async function expose(port: number): Promise<number | undefined> {
+  if (!vscode.env.remoteName) return port;
+  const ext = await vscode.env.asExternalUri(vscode.Uri.parse(`http://localhost:${port}`));
+  const m = /^(?:localhost|127\.0\.0\.1)(?::(\d+))?$/.exec(ext.authority);
+  if (ext.scheme !== 'http' || !m) return undefined;
+  out.info(`remote window (${vscode.env.remoteName}): proxy port ${port} forwarded to local port ${m[1] ?? '80'}`);
+  return Number(m[1] ?? 80);
 }
 
 const warned = new Set<string>();
@@ -164,9 +171,6 @@ const warned = new Set<string>();
  * ahí se sigue la redirección al dominio principal y, si es una web publicada, los clics y la escritura nacen apagados.
  */
 async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true): Promise<void> {
-  // En una ventana remota (WSL, SSH, contenedor, Codespaces) el proxy corre en la otra máquina y las celdas,
-  // que se pintan en esta, no lo alcanzan: mejor decirlo que abrir un panel en blanco (P-46).
-  if (remote()) return;
   const capped = capCells(mosaic.cells);
   if (capped.dropped > 0) void vscode.window.showWarningMessage(t('A mosaic holds up to {0} cells; the rest were left out.', MAX_CELLS));
   let next: Mosaic = { ...mosaic, cells: capped.cells };
@@ -193,6 +197,7 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true):
     onHint: (origin) => void offerApi(ctx, origin),
     routes: () => projectRoutes(folder()),
     follow: followOn,
+    expose,
   });
   const host = current;
   // Se recuerda cómo queda: al abrirlo, cada vez que cambia de forma y, con un respiro, cuando una celda navega.
@@ -245,7 +250,6 @@ async function offerApi(ctx: vscode.ExtensionContext, raw: string): Promise<void
 }
 
 async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
-  if (remote()) return;
   // Con un mosaico abierto, el botón de la barra de estado lo trae al frente en vez de abrir otro.
   if (current) {
     current.panel.reveal();
@@ -263,7 +267,6 @@ async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
 
 /** Elegir rutas del proyecto y dispositivos, y abrir la matriz: una fila por ruta, una columna por dispositivo. */
 async function openMatrix(ctx: vscode.ExtensionContext): Promise<void> {
-  if (remote()) return;
   const target = current ? { origin: current.mosaic().target, path: '/' } : await pickTarget();
   if (!target) return;
   const routes = await projectRoutes(folder());
@@ -357,7 +360,6 @@ async function save(): Promise<void> {
 }
 
 async function openSaved(ctx: vscode.ExtensionContext): Promise<void> {
-  if (remote()) return;
   const f = folder();
   if (!f) {
     void vscode.window.showInformationMessage(t('Open a folder to save mosaics with your project.'));

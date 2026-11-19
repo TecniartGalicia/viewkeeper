@@ -114,6 +114,13 @@ export interface RunningProxy {
   gateCookie: string;
   /** Origen que ve la celda: http://s-<sesion>-<etiqueta>.localhost:<puerto> */
   originFor(session: string): string;
+  /**
+   * En una ventana remota las celdas no llegan a `port` (está en la otra máquina) sino al puerto local por el que
+   * VS Code lo reenvía. Hay que darlo antes de cargar ninguna celda: cambia el origen que ven.
+   */
+  setPublicPort(port: number): void;
+  /** El puerto por el que entran las celdas: el reenviado si lo hay, o el propio. */
+  shownPort(): number;
   /** URL con la que una celda entra por primera vez: deja la cookie de entrada y redirige. */
   entryUrl(session: string, path: string): string;
   /** URL de un solo uso para la captura: entra y reproduce las cookies de la sesión. No lleva el testigo. */
@@ -434,14 +441,22 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   const agentHttp = new http.Agent({ keepAlive: true });
   const agentHttps = new https.Agent({ keepAlive: true });
   let port = 0;
+  let publicPort = 0;
   let panelOrigin = '';
   let gateCookie = '';
 
-  const originFor = (session: string): string => `http://s-${session}-${tag}.localhost:${port}`;
+  const shownPort = (): number => publicPort || port;
+  const originFor = (session: string): string => `http://s-${session}-${tag}.localhost:${shownPort()}`;
+  /** El origen por el propio puerto del proxy: para quien corre en la misma máquina que él (la captura). */
+  const innerOrigin = (session: string): string => `http://s-${session}-${tag}.localhost:${port}`;
+  /** La sesión de un Host, entre por el puerto propio o por el reenviado. Cualquier otro Host se rechaza. */
+  const sessionOf = (host: string | undefined): string | null => sessionFromHost(host, port, tag) ?? (publicPort ? sessionFromHost(host, publicPort, tag) : null);
+  /** El origen por el que llegó esta petición (ya validado por sessionOf): es el que la página tiene por suyo. */
+  const cameBy = (req: http.IncomingMessage): string => `http://${String(req.headers.host).toLowerCase()}`;
   const scriptTag = `<script src="${PREFIX}/agent.js"></script>`;
 
   const authorize = (req: http.IncomingMessage): { session: string } | { status: number } => {
-    const session = sessionFromHost(req.headers.host, port, tag);
+    const session = sessionOf(req.headers.host);
     if (session === null) return { status: 421 };
     if (!crossSiteAllowed(req)) return { status: 403 };
     // Sin cookie solo pasa lo que el navegador marca como lanzado por una página de ESTE origen, que para
@@ -596,7 +611,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
 
   const handle = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     const url = req.url ?? '/';
-    const session0 = sessionFromHost(req.headers.host, port, tag);
+    const session0 = sessionOf(req.headers.host);
     if (session0 === null) {
       res.writeHead(421, { 'content-type': 'text/plain' }).end('Host no admitido');
       return;
@@ -604,7 +619,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     if (url.startsWith(PREFIX + '/enter?')) return enter(url, session0, res);
     const auth = authorize(req);
     if ('status' in auth) return deny(res, auth.status);
-    const ctx: Ctx = { target, proxyOrigin: originFor(auth.session) };
+    const ctx: Ctx = { target, proxyOrigin: cameBy(req) };
     if (url === PREFIX + '/agent.js') {
       // El agente nace sabiendo con quién puede hablar: el origen del panel va incrustado, no se lee de la página. (H-1)
       const body = `var __VK_PANEL=${JSON.stringify(panelOrigin)},__VK_APIS=${JSON.stringify(apis.map((a) => a.url.origin))},__VK_TARGETS=${JSON.stringify(targets)};\n${opts.agentSource}`;
@@ -644,13 +659,12 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   // WebSocket (recarga en caliente): túnel TCP con la petición reescrita.
   server.on('upgrade', (req, socket: Duplex, head: Buffer) => {
     const auth = authorize(req);
-    const session = 'session' in auth ? auth.session : '';
-    // Un WebSocket no pasa por CORS: se exige que lo abra la propia celda.
-    if ('status' in auth || req.headers.origin !== originFor(session)) {
+    // Un WebSocket no pasa por CORS: se exige que lo abra la propia celda (el origen por el que ella entró).
+    if ('status' in auth || req.headers.origin !== cameBy(req)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
-    const ctx: Ctx = { target, proxyOrigin: originFor(session) };
+    const ctx: Ctx = { target, proxyOrigin: cameBy(req) };
     const headers = rewriteRequestHeaders(req.headers, ctx, false);
     headers.connection = 'Upgrade';
     headers.upgrade = req.headers.upgrade ?? 'websocket';
@@ -712,8 +726,13 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         captureUrl: (session, path) => {
           const k = randomBytes(18).toString('hex');
           tickets.set(k, { session, expires: now() + TICKET_MS });
-          return `${originFor(session)}${PREFIX}/enter?k=${k}&to=${encodeURIComponent(safeLocalPath(path))}`;
+          // La captura la hace un navegador de la máquina del proxy: entra por su puerto, no por el reenviado.
+          return `${innerOrigin(session)}${PREFIX}/enter?k=${k}&to=${encodeURIComponent(safeLocalPath(path))}`;
         },
+        setPublicPort: (p) => {
+          publicPort = Number.isInteger(p) && p > 0 && p < 65536 && p !== port ? p : 0;
+        },
+        shownPort,
         setPanelOrigin: (o) => {
           panelOrigin = o;
         },

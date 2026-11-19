@@ -23,6 +23,11 @@ export interface HostOptions {
   routes?: () => Promise<Route[]>;
   /** ¿Está encendido «seguir al editor»? Se pregunta cada vez que se pinta la barra. */
   follow?: () => boolean;
+  /**
+   * En una ventana remota: trae el puerto del proxy a esta máquina y devuelve el puerto local, o undefined si
+   * desde aquí solo se llega por otro dominio (VS Code en el navegador), donde las celdas no pueden funcionar.
+   */
+  expose?: (port: number) => Promise<number | undefined>;
 }
 
 export interface Metrics {
@@ -140,6 +145,14 @@ export class PanelHost implements vscode.Disposable {
     let agentSource = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'agent.js'), 'utf8');
     if (opts.sonda) agentSource = agentSource.replace('/*SONDA-INICIO*/', opts.sonda.inicio).replace('/*SONDA*/', opts.sonda.pregunta);
     const proxy = await startProxy({ target: mosaic.target, agentSource, log: opts.log, pages: proxyPages(), ...opts.proxy });
+    if (opts.expose) {
+      const shown = await opts.expose(proxy.port).catch(() => undefined);
+      if (shown === undefined) {
+        await proxy.close();
+        throw new Error(vscode.l10n.t('ViewKeeper cannot open a mosaic in this window: its cells need the preview on a local port, and from here it is only reachable through another domain.'));
+      }
+      proxy.setPublicPort(shown);
+    }
     const panel = vscode.window.createWebviewPanel('viewkeeper.mosaic', `ViewKeeper · ${mosaic.name}`, vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -280,7 +293,7 @@ export class PanelHost implements vscode.Disposable {
 
   /** Se escribe una vez: la política admite cualquier sesión de ESTE proxy (http://*.localhost:<su puerto>). */
   private writeHtml(): void {
-    this.panel.webview.html = html(this.panel.webview, this.extensionUri, `http://*.localhost:${this.proxy.port}`);
+    this.panel.webview.html = html(this.panel.webview, this.extensionUri, `http://*.localhost:${this.proxy.shownPort()}`);
   }
 
   /** Sustituye el mosaico del panel. Las celdas que siguen igual no se recargan. */
