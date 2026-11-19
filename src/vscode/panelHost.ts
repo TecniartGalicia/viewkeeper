@@ -4,8 +4,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { DEVICES, findDevice, rotate, type Device } from '../core/devices.ts';
-import { applyEdit, parseMosaic, type Mosaic } from '../core/mosaic.ts';
-import { startProxy, type ProxyOptions, type RunningProxy } from '../core/proxy.ts';
+import { applyEdit, isDevHost, parseMosaic, type Mosaic } from '../core/mosaic.ts';
+import { startProxy, type ProxyOptions, type ProxyPages, type RunningProxy } from '../core/proxy.ts';
 import type { AgentCommand, AgentEvent } from '../core/sync.ts';
 import type { CellView, PanelState, PanelText } from '../webview/panel.ts';
 
@@ -40,7 +40,7 @@ interface FromPanel {
 }
 
 /** Botones de la barra que lanzan un comando de la extensión. Lo demás que pida el panel se ignora. */
-const PANEL_COMMANDS = new Set(['openUrl', 'reload','capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor']);
+const PANEL_COMMANDS = new Set(['openUrl', 'reload', 'capture', 'captureFullPage', 'save', 'addSession', 'openMatrix', 'doctor']);
 
 function texts(): PanelText {
   const t = vscode.l10n.t;
@@ -62,6 +62,21 @@ function texts(): PanelText {
     remove: t('Remove'),
     empty: t('No cells. Add a device to start.'),
     session1: t('session'),
+    deployed: t('Deployed site'),
+    deployedHint: t('Click and typing sync start switched off on a deployed site, so nothing is done once per device on real data.'),
+  };
+}
+
+/** Las páginas que el proxy pone en una celda cuando no puede enseñar la app. */
+function proxyPages(): ProxyPages {
+  const t = vscode.l10n.t;
+  return {
+    denied: t('This address only serves the cells of the ViewKeeper panel.'),
+    downTitle: t('Nothing is listening on {0}'),
+    downBody: t('Start your dev server. This cell retries by itself every two seconds.'),
+    leftTitle: t('This page redirects outside the mosaic'),
+    leftBody: t('It goes to {0}. A cell only shows the site the mosaic was opened for, so the redirect was not followed. Signing in through another site cannot happen inside a cell.'),
+    back: t('Back'),
   };
 }
 
@@ -103,7 +118,7 @@ export class PanelHost implements vscode.Disposable {
     if (unknown.length) void vscode.window.showWarningMessage(vscode.l10n.t('This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to "viewkeeper.customDevices".', unknown.join(', ')));
     let agentSource = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'agent.js'), 'utf8');
     if (opts.sonda) agentSource = agentSource.replace('/*SONDA-INICIO*/', opts.sonda.inicio).replace('/*SONDA*/', opts.sonda.pregunta);
-    const proxy = await startProxy({ target: mosaic.target, agentSource, log: opts.log, ...opts.proxy });
+    const proxy = await startProxy({ target: mosaic.target, agentSource, log: opts.log, pages: proxyPages(), ...opts.proxy });
     const panel = vscode.window.createWebviewPanel('viewkeeper.mosaic', `ViewKeeper · ${mosaic.name}`, vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -167,7 +182,7 @@ export class PanelHost implements vscode.Disposable {
 
   private state(): PanelState {
     const devices = [...DEVICES, ...this.customDevices].map((d) => ({ id: d.id, name: d.name, width: d.width, height: d.height }));
-    return { cells: this.views(), sync: this.model.sync, sonda: this.sonda, text: texts(), devices, name: this.model.name };
+    return { cells: this.views(), sync: this.model.sync, sonda: this.sonda, text: texts(), devices, name: this.model.name, deployed: !isDevHost(this.model.target) };
   }
 
   private postState(): void {
@@ -279,6 +294,7 @@ const CSS = `
   #barra { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: var(--vscode-editorWidget-background); border-bottom: 1px solid var(--vscode-panel-border); }
   #barra .sep { width: 1px; height: 20px; background: var(--vscode-panel-border); margin: 0 4px; }
   #barra .etq { opacity: .75; margin-right: 2px; }
+  #barra .vivo { margin-left: auto; padding: 1px 8px; border-radius: 9px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); }
   button, select { font: inherit; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: 1px solid transparent; border-radius: 4px; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, transparent); }
   button:hover { background: var(--vscode-button-secondaryHoverBackground); }

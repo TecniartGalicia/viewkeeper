@@ -1,7 +1,9 @@
 // Casos de uso de la extensión. Cada comando envuelto en `wrap`: un fallo se enseña, no se traga.
 import * as vscode from 'vscode';
 import { DEVICES, parseCustomDevice, type Device } from '../core/devices.ts';
-import { MAX_CELLS, SYNC_ALL, addSession, capCells, isLoopback, isValidSession, matrix, normalizeTarget, type Mosaic } from '../core/mosaic.ts';
+import { MAX_CELLS, SYNC_ALL, addSession, capCells, isDevHost, isLoopback, isValidSession, matrix, normalizeTarget, type Mosaic } from '../core/mosaic.ts';
+import { prepareOpen } from '../core/open.ts';
+import { resolveTarget } from '../core/probe.ts';
 import { detectRoutes, fillRoute } from '../core/routes.ts';
 import { captureMosaic } from './captureFlow.ts';
 import { apiTrustsApp, findDevServers } from './detect.ts';
@@ -99,7 +101,9 @@ async function openUrl(ctx: vscode.ExtensionContext): Promise<void> {
   // cada fila conserva su ruta; con una ruta escrita, todas las filas van a ella.
   const keepRows = rows.length > 1 && path === '/';
   const cells = now && now.cells.length > 0 ? now.cells.map((c) => (keepRows ? c : { ...c, path })) : matrix([target.path], defaultDevices());
-  await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells, sync: now?.sync ?? SYNC_ALL });
+  // De una web publicada (clics y escritura apagados por seguridad) a un servidor de desarrollo: vuelven encendidos.
+  const sync = now && isDevHost(now.target) === isDevHost(target.origin) ? now.sync : SYNC_ALL;
+  await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells, sync });
 }
 
 /** En una ventana remota dice por qué no y devuelve true. Se mira al empezar cada comando, antes de preguntar nada. */
@@ -109,13 +113,28 @@ function remote(): boolean {
   return true;
 }
 
-async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic): Promise<void> {
+const warned = new Set<string>();
+
+/**
+ * Abre el mosaico. `fresh` es una apertura pedida por el usuario (no un volver a abrir el mismo tras un ajuste):
+ * ahí se sigue la redirección al dominio principal y, si es una web publicada, los clics y la escritura nacen apagados.
+ */
+async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true): Promise<void> {
   // En una ventana remota (WSL, SSH, contenedor, Codespaces) el proxy corre en la otra máquina y las celdas,
   // que se pintan en esta, no lo alcanzan: mejor decirlo que abrir un panel en blanco (P-46).
   if (remote()) return;
   const capped = capCells(mosaic.cells);
   if (capped.dropped > 0) void vscode.window.showWarningMessage(t('A mosaic holds up to {0} cells; the rest were left out.', MAX_CELLS));
-  const next: Mosaic = { ...mosaic, cells: capped.cells };
+  let next: Mosaic = { ...mosaic, cells: capped.cells };
+  if (fresh) {
+    const p = await prepareOpen(next, resolveTarget);
+    next = p.mosaic;
+    if (p.redirectedFrom) out.info(`${p.redirectedFrom} redirects to ${next.target}: opening that one`);
+    if (p.deployed && !warned.has(next.target)) {
+      warned.add(next.target);
+      void vscode.window.showInformationMessage(t('{0} is a deployed site, so click and typing sync start switched off: otherwise every click and keystroke would be repeated once per device on real data. You can switch them on in the toolbar.', new URL(next.target).host));
+    }
+  }
   if (current) current.dispose();
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   // La lista puede venir escrita en los ajustes del repositorio: cada origen se comprueba antes de usarlo (N-6).
@@ -160,7 +179,7 @@ async function offerApi(ctx: vscode.ExtensionContext, raw: string): Promise<void
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   const list = [...new Set([...(cfg.get<string[]>('apiOrigins') ?? []), origin])];
   await cfg.update('apiOrigins', list, folder() ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
-  await show(ctx, current.mosaic());
+  await show(ctx, current.mosaic(), false);
 }
 
 async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {

@@ -10,6 +10,7 @@ import * as zlib from 'node:zlib';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Transform, type TransformCallback } from 'node:stream';
 import type { Duplex } from 'node:stream';
+import { isAlias } from './alias.ts';
 
 export const PREFIX = '/__viewkeeper';
 /** Las cookies no distinguen puerto: el nombre lleva el del proxy para que dos mosaicos no se pisen (H-3). */
@@ -33,7 +34,27 @@ export interface ProxyOptions {
   now?: () => number;
   /** Puerto fijo. Solo para pruebas: por defecto, el preferido del destino y, si está ocupado, uno libre. */
   port?: number;
+  /** Textos de las páginas que el proxy pone en una celda. Los traduce quien lo arranca; por defecto, inglés. */
+  pages?: Partial<ProxyPages>;
 }
+
+/** `{0}` es el servidor (host o origen) del que se habla. */
+export interface ProxyPages {
+  denied: string;
+  downTitle: string;
+  downBody: string;
+  leftTitle: string;
+  leftBody: string;
+  back: string;
+}
+export const PAGES_EN: ProxyPages = {
+  denied: 'This address only serves the cells of the ViewKeeper panel.',
+  downTitle: 'Nothing is listening on {0}',
+  downBody: 'Start your dev server. This cell retries by itself every two seconds.',
+  leftTitle: 'This page redirects outside the mosaic',
+  leftBody: 'It goes to {0}. A cell only shows the site the mosaic was opened for, so the redirect was not followed. Signing in through another site cannot happen inside a cell.',
+  back: 'Back',
+};
 
 export interface RunningProxy {
   port: number;
@@ -182,11 +203,30 @@ export function rewriteLocation(loc: string, ctx: Ctx): string {
     return loc;
   }
   const t = ctx.target;
-  const same = u.origin === t.origin || (u.protocol === t.protocol && u.port === t.port && isLoopbackHost(u.hostname) && isLoopbackHost(t.hostname));
+  // También los alias de la misma web (http/https, con y sin «www»): el destino ya es el dominio principal.
+  const same = u.origin === t.origin || (u.protocol === t.protocol && u.port === t.port && isLoopbackHost(u.hostname) && isLoopbackHost(t.hostname)) || isAlias(u, t);
   if (!same) return loc;
   // Una ruta relativa ya vale tal cual; solo se toca lo que nombraba al servidor.
   if (!/^[a-z][a-z0-9+.-]*:|^\/\//i.test(loc.trim())) return loc;
   return ctx.proxyOrigin + u.pathname + u.search + u.hash;
+}
+
+/**
+ * ¿Esta redirección saca a la celda del mosaico? Devuelve el origen al que iría, o undefined si se queda.
+ * Se queda si va al propio destino o a un alias suyo; pero un alias que redirige a la MISMA ruta es el servidor
+ * mandando a su dominio principal: reescribirla sería un bucle, así que también cuenta como salida.
+ */
+export function leavesTo(loc: string, ctx: Ctx, requestPath: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(loc, ctx.target.origin + requestPath);
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+  if (rewriteLocation(u.href, ctx) === u.href) return u.origin; // no es el destino ni un alias
+  if (u.origin !== ctx.target.origin && u.pathname + u.search === requestPath) return u.origin;
+  return undefined;
 }
 
 export function rewriteResponseHeaders(h: http.IncomingHttpHeaders, ctx: Ctx, p: HeaderPolicy): http.OutgoingHttpHeaders {
@@ -303,11 +343,15 @@ function decoder(encoding: string | undefined): Transform | null {
   return null;
 }
 
-function page(status: number, title: string, body: string, refresh: boolean): { status: number; html: string } {
+const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/** Página propia del proxy. Los textos se escapan aquí: pueden llevar un nombre de servidor que viene de fuera. */
+function page(status: number, title: string, body: string, refresh: boolean, back?: string): { status: number; html: string } {
   const meta = refresh ? '<meta http-equiv="refresh" content="2">' : '';
+  const link = back ? `<p><a href="#" onclick="history.back();return false">&larr; ${esc(back)}</a></p>` : '';
   return {
     status,
-    html: `<!doctype html><html><head><meta charset="utf-8">${meta}<title>${title}</title></head><body style="font:14px system-ui;padding:24px;color:#555"><h3>${title}</h3><p>${body}</p></body></html>`,
+    html: `<!doctype html><html><head><meta charset="utf-8">${meta}<title>${esc(title)}</title></head><body style="font:14px system-ui;padding:24px;color:#555"><h3>${esc(title)}</h3><p>${esc(body)}</p>${link}</body></html>`,
   };
 }
 
@@ -321,6 +365,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   const fixCookies = opts.fixCookies !== false;
   const log = opts.log ?? ((): void => {});
   const now = opts.now ?? Date.now;
+  const pages: ProxyPages = { ...PAGES_EN, ...opts.pages };
   // Solo orígenes de esta máquina: el proxy no es una pasarela hacia la red.
   const apis = (opts.apiOrigins ?? []).map((o) => new URL(o)).filter((u) => isLoopbackHost(u.hostname) && (u.protocol === 'http:' || u.protocol === 'https:'));
   const seenCookies = new Map<string, Map<string, string>>();
@@ -355,7 +400,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   };
 
   const deny = (res: http.ServerResponse, status: number): void => {
-    const p = page(status, 'ViewKeeper', 'Esta dirección solo sirve a las celdas del panel de ViewKeeper.', false);
+    const p = page(status, 'ViewKeeper', pages.denied, false);
     res.writeHead(p.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(p.html);
   };
 
@@ -414,6 +459,21 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           }
         }
         if (jar) for (const c of ur.headers['set-cookie'] ?? []) if (expiresCookie(c)) jar.delete(c.split('=')[0].trim());
+        // Un documento que redirige a otra web: el panel no deja a la celda ir allí y se quedaría en blanco.
+        // Se le dice adónde iba (solo el origen: la dirección entera puede llevar un testigo). Las cookies que
+        // traía la redirección se conservan.
+        if (apiPrefix === undefined && html && status >= 300 && status < 400 && typeof ur.headers.location === 'string') {
+          const out = leavesTo(ur.headers.location, ctx, path);
+          if (out !== undefined) {
+            ur.resume();
+            note(`redirect out of the mosaic: ${path.split('?')[0]} -> ${out}`);
+            const p = page(200, pages.leftTitle, pages.leftBody.replace('{0}', out), false, pages.back);
+            const h: http.OutgoingHttpHeaders = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
+            if (outHeaders['set-cookie']) h['set-cookie'] = outHeaders['set-cookie'];
+            res.writeHead(p.status, h).end(p.html);
+            return;
+          }
+        }
         res.writeHead(status, outHeaders);
         // Si el servidor corta a media respuesta, la celda tiene que enterarse (un EventSource debe reconectar). (H-9)
         ur.on('aborted', () => res.destroy());
@@ -438,7 +498,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         res.destroy();
         return;
       }
-      const p = page(502, 'Nada escuchando en ' + dest.host, 'Arranca tu servidor de desarrollo. Esta celda lo reintenta sola cada dos segundos.', true);
+      const p = page(502, pages.downTitle.replace('{0}', dest.host), pages.downBody, true);
       res.writeHead(p.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(p.html);
     });
     req.pipe(up);

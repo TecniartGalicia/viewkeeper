@@ -1,6 +1,69 @@
 // Preguntas de red a servidores de esta máquina. Node puro, sin 'vscode': se prueba en test/unit/probe.test.ts.
 import * as http from 'node:http';
+import * as https from 'node:https';
+import { isAlias } from './alias.ts';
 import type { Probe } from './ports.ts';
+
+export interface Resolved {
+  origin: string;
+  path: string;
+  /** Orígenes por los que pasó, en orden, sin el de partida. Vacío si no hubo redirección de dominio. */
+  hops: string[];
+}
+
+/**
+ * Sigue la redirección al dominio principal: «ejemplo.com» → «https://www.ejemplo.com». Solo entre alias de la
+ * misma web (isAlias): una redirección a otro dominio —un inicio de sesión externo, un acortador— no se sigue,
+ * porque el mosaico acabaría enseñando otra web. Nunca lanza: ante un fallo devuelve lo que se le dio.
+ */
+export async function resolveTarget(origin: string, path: string, timeoutMs = 2500, maxHops = 5): Promise<Resolved> {
+  const start = { origin, path, hops: [] as string[] };
+  let at: URL;
+  try {
+    at = new URL(path, origin);
+  } catch {
+    return start;
+  }
+  const hops: string[] = [];
+  for (let i = 0; i < maxHops; i++) {
+    const loc = await redirectOf(at, timeoutMs);
+    if (loc === undefined) break;
+    let next: URL;
+    try {
+      next = new URL(loc, at);
+    } catch {
+      break;
+    }
+    // Dentro del mismo origen lo resuelve la propia celda; a otra web, no se va.
+    if (next.origin === at.origin || !isAlias(next, at) || next.username !== '' || next.password !== '') break;
+    hops.push(next.origin);
+    at = next;
+  }
+  if (hops.length === 0) return start;
+  return { origin: at.origin, path: at.pathname + at.search + at.hash, hops };
+}
+
+/** El Location de una respuesta 3xx, o undefined si no redirige o no contesta. No lee el cuerpo. */
+function redirectOf(u: URL, timeoutMs: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const secure = u.protocol === 'https:';
+    const req = (secure ? https : http).request(
+      { protocol: u.protocol, hostname: u.hostname.replace(/^\[|\]$/g, ''), port: u.port || (secure ? 443 : 80), path: u.pathname + u.search, method: 'GET', timeout: timeoutMs, headers: { accept: 'text/html', 'user-agent': 'ViewKeeper' } },
+      (res) => {
+        const s = res.statusCode ?? 0;
+        const loc = res.headers.location;
+        res.destroy();
+        resolve(s >= 300 && s < 400 && typeof loc === 'string' ? loc : undefined);
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(undefined);
+    });
+    req.on('error', () => resolve(undefined));
+    req.end();
+  });
+}
 
 /**
  * Siempre por NOMBRE («localhost»), nunca 127.0.0.1: Vite escucha solo en ::1 (sonda S-8)

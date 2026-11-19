@@ -40,6 +40,8 @@ export interface PanelText {
   remove: string;
   empty: string;
   session1: string;
+  deployed: string;
+  deployedHint: string;
 }
 export interface PanelState {
   name: string;
@@ -49,6 +51,8 @@ export interface PanelState {
   /** Solo en la sonda: reenvía al host todo lo que dicen los agentes. El producto no lo activa nunca. */
   sonda: boolean;
   text: PanelText;
+  /** El destino no es un servidor de desarrollo: se avisa en la barra. */
+  deployed?: boolean;
 }
 
 const vscode = acquireVsCodeApi();
@@ -161,6 +165,13 @@ function renderBar(s: PanelState): void {
     withKey(button(s.text.session, 'user', () => command('addSession')), 'bar:addSession'),
     withKey(button(s.text.matrix, 'grid', () => command('openMatrix')), 'bar:openMatrix'),
   );
+  if (s.deployed) {
+    const live = document.createElement('span');
+    live.className = 'vivo';
+    live.textContent = s.text.deployed;
+    live.title = s.text.deployedHint;
+    barEl.append(live);
+  }
 }
 
 // ───────────────────────── celdas

@@ -63,5 +63,14 @@
   "Open in ViewKeeper": "Abrir en ViewKeeper",
   "Pick your dev server or type an address (https://example.com/path)": "Elige tu servidor de desarrollo o escribe una dirección (https://ejemplo.com/ruta)",
   "Open this address": "Abrir esta dirección",
-  "Address": "Dirección"
+  "Address": "Dirección",
+  "{0} is a deployed site, so click and typing sync start switched off: otherwise every click and keystroke would be repeated once per device on real data. You can switch them on in the toolbar.": "{0} es una web publicada, así que la sincronización de clics y de escritura empieza apagada: si no, cada clic y cada tecla se repetirían una vez por dispositivo sobre datos reales. Puedes encenderlas en la barra del panel.",
+  "Deployed site": "Web publicada",
+  "Click and typing sync start switched off on a deployed site, so nothing is done once per device on real data.": "En una web publicada la sincronización de clics y de escritura empieza apagada, para que nada se haga una vez por dispositivo sobre datos reales.",
+  "This address only serves the cells of the ViewKeeper panel.": "Esta dirección solo sirve a las celdas del panel de ViewKeeper.",
+  "Nothing is listening on {0}": "Nada escuchando en {0}",
+  "Start your dev server. This cell retries by itself every two seconds.": "Arranca tu servidor de desarrollo. Esta celda lo reintenta sola cada dos segundos.",
+  "This page redirects outside the mosaic": "Esta página redirige fuera del mosaico",
+  "It goes to {0}. A cell only shows the site the mosaic was opened for, so the redirect was not followed. Signing in through another site cannot happen inside a cell.": "Va a {0}. Una celda solo enseña la web para la que se abrió el mosaico, así que la redirección no se ha seguido. Iniciar sesión a través de otro sitio no cabe dentro de una celda.",
+  "Back": "Volver"
 }

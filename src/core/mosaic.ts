@@ -60,6 +60,38 @@ export function isLoopback(origin: string): boolean {
   }
 }
 
+/**
+ * ¿Es un servidor de desarrollo (esta máquina o la red local)? Lo demás se trata como una web publicada,
+ * con datos de verdad. Sin lista de sufijos públicos: IP privadas, nombres sin punto y los dominios reservados
+ * para redes locales y pruebas.
+ */
+export function isDevHost(origin: string): boolean {
+  let h: string;
+  try {
+    h = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h.startsWith('[')) return h === '[::1]' || /^\[(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/.test(h);
+  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (ip) {
+    const a = Number(ip[1]);
+    const b = Number(ip[2]);
+    return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+  }
+  if (!h.includes('.')) return true; // «mipc», «intranet»: un nombre de la red local
+  return /\.(local|test|internal|lan|home\.arpa|example|invalid)$/.test(h);
+}
+
+/**
+ * En una web publicada, cada clic y cada tecla se repetirían una vez por celda sobre datos reales («Guardar»
+ * pulsado tres veces). Ahí esas dos sincronizaciones nacen apagadas; el usuario las enciende si quiere.
+ */
+export function syncForTarget(target: string, sync: SyncOptions): SyncOptions {
+  return isDevHost(target) ? sync : { ...sync, click: false, input: false };
+}
+
 /** Ruta local y codificada. Se resuelve como el navegador (que ignora tabuladores): si cambia de origen, se descarta. */
 export function normalizePath(p: string): string {
   const s = p.trim();
