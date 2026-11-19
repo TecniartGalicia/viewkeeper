@@ -14,8 +14,8 @@ Repositorios: `Desktop/Apps/viewkeeper` → `TecniartGalicia/viewkeeper` (nuevo,
 | 1 | Repo con núcleo, agente y banco de navegador | Cerrada | — |
 | 2 | Extensión: panel con barra de herramientas, detección, API en otro puerto, ES/EN, diagnóstico | Cerrada | — |
 | 3 | Funciones avanzadas, gratis: matriz, sesiones, mosaicos guardados, captura | Cerrada | — |
-| 4 | Publicación en Marketplace, Open VSX y GitHub Release | En curso | — |
-| 5 | Borradores de lanzamiento | Libre | Publicar en redes es del titular |
+| 4 | Publicación en Marketplace, Open VSX y GitHub Release | Cerrada | — |
+| 5 | Borradores de lanzamiento | Cerrada (borradores) | Publicar en redes es del titular |
 
 Ninguna tarea humana bloquea: los tokens de publicación existen (`Documents/handsfree-secrets.txt`, compartidos por la familia; `VSCE_PAT` de organización, caduca 2027-08-13) y el repo se crea por API con el token de `git credential`.
 
@@ -68,7 +68,7 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 - Criterio cumplido (sustituto del de Pro): P-22 a P-30 en verde; I-6 (mosaicos guardados, también rotos o editados a mano) e I-7 (sesión nueva aislada y viva, captura con sesión y hoja) en VS Code. La matriz se probó por su núcleo (`matrix`, `detectRoutes`); el diálogo de elegir rutas y dispositivos no está automatizado.
 - Commits: `c8f8f42`.
 
-### Fase 4 — en curso
+### Fase 4 — cerrada el 2026-11-19
 - Documentación, icono (Codex), captura y GIF grabados con la extensión de verdad sobre una tienda de demostración, CI y publicación con reintentos y la release de GitHub antes que las tiendas. Repo `TecniartGalicia/viewkeeper` creado, con `VSCE_PAT` y `OVSX_PAT`.
 - Commits: `24de59e`.
 - I-4 y P-42: la suite entera en **VSCodium 1.143** (descargado portátil), 8 de 8; sin reescribir cookies no llega ninguna, igual que en VS Code. Cursor no se ha probado.
@@ -79,4 +79,8 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 
 ## Si esto se retoma en otra sesión
 
-Mirar la tabla de estado y el diario. Fase 4: CI en GitHub, después etiqueta `v0.1.0` y comprobar en las tres tiendas. `scripts/gh-runs.mjs ci|release --esperar` sigue una ejecución.
+Todo cerrado. Siguiente versión: subir versión y CHANGELOG, etiqueta `vX.Y.Z`; `node scripts/gh-runs.mjs release --esperar` sigue la publicación. Lo pendiente está en `docs/ENTREGA.md`.
+- Criterio cumplido: P-40 (el flujo de publicación rechaza un paquete con ficheros de prueba; el VSIX solo lleva extensión, panel, agente, icono y documentos), P-42 e I-4 en VSCodium, «en Marketplace y Open VSX el mismo día, con GIF»: `v0.1.0` publicada el 19-11 en las dos tiendas y en GitHub Release, instalada desde el Marketplace en una carpeta limpia con `code --install-extension`. P-41 (20 pasadas con Vite y Next) no se repitió: las apps de prueba de la Fase 0 se borraron; las 18 de la Fase 0 siguen siendo la referencia.
+
+### Fase 5 — cerrada el 2026-11-19
+- Borradores en `docs/LANZAMIENTO.md`. Publicarlos es del titular.
