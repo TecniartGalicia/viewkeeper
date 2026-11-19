@@ -7,21 +7,18 @@
 // Ejecutar desde la carpeta del prototipo:  node --no-warnings auditoria/r4-navegador.ts
 import * as http from 'node:http';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { WebSocket } from 'ws';
 import { build } from 'esbuild';
 import { DEVICES, findDevice } from '../../src/core/devices.ts';
 import { SYNC_ALL, type Cell } from '../../src/core/mosaic.ts';
 import { GATE_PREFIX, PREFIX, startProxy, type RunningProxy } from '../../src/core/proxy.ts';
 import { caso, espera, nota, resultado, servidorFalso } from './util.ts';
+import { abreChrome, hasta } from './cdp.ts';
 import type { PanelState, PanelText } from '../../src/webview/panel.ts';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const raiz = path.dirname(path.dirname(aqui));
-const CHROME = process.env.AUD_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const agentSource = fs.readFileSync(path.join(raiz, 'media', 'agent.js'), 'utf8');
 const built = await build({ entryPoints: [path.join(raiz, 'src', 'webview', 'panel.ts')], bundle: true, format: 'iife', target: 'es2020', write: false, logLevel: 'silent' });
 const panelJs = built.outputFiles[0].text;
@@ -311,104 +308,13 @@ const panel = await servidorFalso((req, res, body) => {
 // Lo que hace panelHost.ts al recibir panelReady: el agente solo hablará con el origen del panel.
 for (const p of [px, pxb, px2]) p.setPanelOrigin(panel.origin);
 
-// ───────────────────────── Chrome sin ventana + CDP
-// En un runner de CI recién arrancado Chrome puede tardar más de 10 s en abrir el puerto de depuración (pasó 3 veces
-// el 19-11): hasta 30 s por intento y un segundo intento con perfil nuevo antes de rendirse.
-function lanzaChrome(): { chrome: ReturnType<typeof spawn>; perfil: string } {
-  const perfil = fs.mkdtempSync(path.join(process.env.AUD_TMP ?? os.tmpdir(), 'vk-aud-'));
-  const chrome = spawn(
-    CHROME,
-    ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${perfil}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps', '--metrics-recording-only', '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost , EXCLUDE 127.0.0.1', '--window-size=1600,1000', 'about:blank'],
-    { stdio: 'ignore' },
-  );
-  return { chrome, perfil };
-}
-let { chrome, perfil } = lanzaChrome();
-let wsUrl = '';
-for (let intento = 1; intento <= 2 && !wsUrl; intento++) {
-  if (intento === 2) {
-    console.log('Chrome no abrió el puerto de depuración en 30 s; segundo intento con un perfil nuevo.');
-    chrome.kill();
-    ({ chrome, perfil } = lanzaChrome());
-  }
-  for (let i = 0; i < 300 && !wsUrl; i++) {
-    await espera(100);
-    try {
-      const [p, ruta] = fs.readFileSync(path.join(perfil, 'DevToolsActivePort'), 'utf8').trim().split('\n');
-      wsUrl = `ws://127.0.0.1:${p.trim()}${ruta.trim()}`;
-    } catch {
-      /* aún no */
-    }
-  }
-}
-if (!wsUrl) {
+// ───────────────────────── Chrome sin ventana + CDP (test/browser/cdp.ts)
+const nav = await abreChrome();
+if (!nav) {
   console.log('No se pudo arrancar Chrome sin ventana; este guion no ha comprobado nada.');
-  chrome.kill();
   process.exit(2);
 }
-const ws = new WebSocket(wsUrl, { perMessageDeflate: false });
-await new Promise<void>((r, j) => {
-  ws.once('open', () => r());
-  ws.once('error', j);
-});
-let seq = 0;
-const pend = new Map<number, (v: { result?: Record<string, unknown>; error?: { message: string } }) => void>();
-ws.on('message', (d) => {
-  const m = JSON.parse(String(d)) as { id?: number; result?: Record<string, unknown>; error?: { message: string } };
-  if (m.id !== undefined) {
-    pend.get(m.id)?.(m);
-    pend.delete(m.id);
-  }
-});
-function cdp(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<Record<string, unknown>> {
-  const id = ++seq;
-  return new Promise((resolve, reject) => {
-    pend.set(id, (m) => (m.error ? reject(new Error(`${method}: ${m.error.message}`)) : resolve(m.result ?? {})));
-    ws.send(JSON.stringify({ id, method, params, sessionId }));
-  });
-}
-async function pestana(url: string): Promise<string> {
-  const { targetId } = (await cdp('Target.createTarget', { url: 'about:blank' })) as { targetId: string };
-  const { sessionId } = (await cdp('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string };
-  await cdp('Page.enable', {}, sessionId);
-  await cdp('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
-  await cdp('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
-  await espera(150);
-  await cdp('Page.navigate', { url }, sessionId);
-  return sessionId;
-}
-async function evalua<T>(s: string, expr: string): Promise<T> {
-  const r = (await cdp('Runtime.evaluate', { expression: expr, returnByValue: true }, s)) as { result: { value: T } };
-  return r.result.value;
-}
-async function clic(s: string, n: number, x: number, y: number): Promise<void> {
-  const r = await evalua<{ l: number; t: number; w: number; cw: number }>(s, `(function(){var f=document.querySelectorAll('iframe')[${n}];var b=f.getBoundingClientRect();return {l:b.left,t:b.top,w:b.width,cw:f.clientWidth};})()`);
-  const k = r.w / r.cw;
-  const X = r.l + x * k;
-  const Y = r.t + y * k;
-  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: X, y: Y }, s);
-  await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: X, y: Y, button: 'left', clickCount: 1 }, s);
-  await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: X, y: Y, button: 'left', clickCount: 1 }, s);
-}
-async function teclea(s: string, texto: string): Promise<void> {
-  for (const ch of texto) {
-    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch }, s);
-    await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: ch }, s);
-    await espera(80);
-  }
-}
-async function intro(s: string): Promise<void> {
-  await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' }, s);
-  await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }, s);
-}
-async function hasta(cond: () => boolean, ms = 6000): Promise<boolean> {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    if (cond()) return true;
-    await espera(100);
-  }
-  return cond();
-}
+const { cdp, pestana, evalua, clic, teclea, intro } = nav;
 const cuenta = (ev: string | RegExp, desde = 0): Record<string, string[]> => {
   const out: Record<string, string[]> = {};
   for (const r of registro.slice(desde)) if (typeof ev === 'string' ? r.ev === ev : ev.test(r.ev)) (out[r.w] ??= []).push(r.ev);
@@ -460,7 +366,11 @@ try {
 
     d = registro.length;
     await intro(s);
-    await espera(900);
+    await hasta(() => {
+      const c = cuenta('submit:f', d);
+      return !!c['393'] && !!c['768'];
+    }, 4000);
+    await espera(900); // margen para ver un segundo envío (el defecto H-4 era el doble)
     const sub = cuenta('submit:f', d);
     const ch2 = cuenta(/^change:/, d);
     caso('ENV-1', '[H-4] Enter en un formulario con botón de envío: doble envío en las seguidoras', (sub['768']?.length ?? 0) !== 1 || (sub['393']?.length ?? 0) !== 1, `submit por celda: ${n(sub)}; change al confirmar: ${n(ch2)}`);
@@ -471,6 +381,11 @@ try {
       await clic(s, 0, 40, y + 12);
       await espera(200);
       await intro(s);
+      // Solo f4 envía de verdad: se espera a que llegue a las dos celdas; en los otros, margen para ver un envío de más.
+      await hasta(() => {
+        const c = cuenta('submit:' + id, d);
+        return !!c['393'] && !!c['768'];
+      }, id === 'f4' ? 4000 : 0);
       await espera(900);
       const sb = cuenta('submit:' + id, d);
       const lider = sb['393']?.length ?? 0;
@@ -495,7 +410,7 @@ try {
     await hasta(() => registro.slice(d2).filter((r) => r.ev.startsWith('cargada:/form')).length >= 2);
     await espera(300);
     await evalua(s, `window.postMessage({ t: 'reload' }, location.origin)`);
-    await espera(1500);
+    await hasta(() => peticiones.filter((p) => p.startsWith('app1 GET /form')).length - antes >= 4, 6000);
     const despues = peticiones.filter((p) => p.startsWith('app1 GET /form')).length;
     // antes → +1 (segundo mosaico de la misma app) +3 (recarga del primero)
     caso('COK-1b', '[H-3] abrir un segundo mosaico deja al primero sin acceso', despues - antes < 4, `peticiones de /form a la app 1 tras abrir otro mosaico de la misma app (1) y recargar las 3 celdas del primero (3): ${despues - antes} de 4`);
@@ -678,7 +593,7 @@ try {
     await clic(s, 0, 60, 82);
     await espera(200);
     await teclea(s, 'ab');
-    await espera(600);
+    await hasta(() => !!cuenta(/^idioma-clic:/, d)['768'] && (cuenta(/^idioma-escrito:/, d)['768']?.length ?? 0) >= 2, 4000);
     const cl = cuenta(/^idioma-clic:/, d);
     const es = cuenta(/^idioma-escrito:/, d);
     caso('HUE-1', '[NUEVO] celdas con idiomas distintos (la función «locale»): la huella incluye el texto y el aria-label, así que ni el clic ni la escritura se reproducen', !cl['768'] && !es['768'], `clic por celda: ${JSON.stringify(cl)}; escritura por celda: ${n(es)}; avisos «miss»: ${haciaHost.slice(h0).filter((x) => x.m.t === 'miss').length}`);
@@ -725,20 +640,7 @@ try {
   // Un montaje que no arranca no es un banco en verde.
   caso('MONTAJE', 'el banco no pudo montar el panel', true, (e as Error).message);
 } finally {
-  try {
-    await Promise.race([cdp('Browser.close'), espera(2000)]);
-  } catch {
-    /* ya cerrado */
-  }
-  await espera(500);
-  if (chrome.exitCode === null) chrome.kill(); // por PID, solo el proceso que lanzó este guion
-  ws.terminate();
   for (const x of [px, pxb, px2, up, up2, malo, panel, api]) await x.close();
-  await espera(500);
-  try {
-    fs.rmSync(perfil, { recursive: true, force: true });
-  } catch {
-    /* Windows suelta los ficheros con retraso */
-  }
+  await nav.cierra();
 }
 process.exit(resultado());
