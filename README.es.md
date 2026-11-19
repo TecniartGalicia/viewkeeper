@@ -30,7 +30,7 @@ Todo es **gratis**.
 - **Seguir al editor** (opcional): abres `app/precios/page.tsx` y el mosaico va a `/precios`. Next.js, SvelteKit, Astro, Nuxt y HTML suelto, también dentro de un monorepo.
 - **Cambiar la ruta de una fila desde su rótulo**, añadir un dispositivo a una fila de la matriz y **ampliar una vista** a todo el panel (Esc para volver).
 - **Reabre lo que tenías.** El botón de la barra de estado recupera el último mosaico del proyecto, con sus dispositivos y sus rutas, si su servidor de desarrollo está en marcha.
-- **Ventanas remotas**: WSL, y SSH o contenedores mediante el reenvío de puertos de VS Code.
+- **Ventanas remotas**: probado en WSL. SSH y contenedores pasan por el reenvío de puertos del propio VS Code y aún no se han probado; si allí una vista se queda en blanco, abre un issue.
 
 ![La misma app en un móvil, una tableta y un portátil, dos rutas, cada fila sincronizada](https://raw.githubusercontent.com/TecniartGalicia/viewkeeper/HEAD/media/shots/mosaic.png)
 

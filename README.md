@@ -30,7 +30,7 @@ Everything is **free**.
 - **Follow the editor** (optional): open `app/pricing/page.tsx` and the mosaic goes to `/pricing`. Next.js, SvelteKit, Astro, Nuxt and plain HTML, also inside a monorepo.
 - **Change a row's route from its label**, add a device to one row of a matrix, and **enlarge a view** to the whole panel (Esc to go back).
 - **Reopens what you had.** The status bar button brings back the last mosaic of the project, with its devices and routes, if its dev server is running.
-- **Remote windows**: WSL, and SSH or containers through VS Code's port forwarding.
+- **Remote windows**: tested in WSL. SSH and containers go through VS Code's own port forwarding and have not been tested yet; if a view stays blank there, please open an issue.
 
 ![The same app on a phone, a tablet and a laptop, two routes, each row in sync](https://raw.githubusercontent.com/TecniartGalicia/viewkeeper/HEAD/media/shots/mosaic.png)
 
