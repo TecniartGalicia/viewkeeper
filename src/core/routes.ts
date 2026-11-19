@@ -56,20 +56,85 @@ export function detectRoutes(files: readonly string[]): Route[] {
     .slice(0, 200);
 }
 
+/** Qué framework sirve las rutas de un fichero, según la forma de su ruta. «html» vale para cualquiera. */
+export type RouteKind = 'next' | 'sveltekit' | 'astro' | 'nuxt' | 'html';
+
+export function kindOf(source: string): RouteKind {
+  const f = source.replace(/\\/g, '/');
+  if (/\+page\.svelte$/.test(f)) return 'sveltekit';
+  if (/\.astro$/.test(f) || /^src\/pages\/.*\.(md|mdx|html)$/.test(f)) return 'astro';
+  if (/\.vue$/.test(f)) return 'nuxt';
+  if (/\.html$/.test(f)) return 'html';
+  return 'next';
+}
+
+/** Los frameworks de rutas que declara un package.json (dependencias normales y de desarrollo). */
+export function frameworksIn(packageJson: string): Set<RouteKind> {
+  const out = new Set<RouteKind>(['html']);
+  try {
+    const p = JSON.parse(packageJson) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> };
+    const deps = { ...p.dependencies, ...p.devDependencies };
+    if ('next' in deps) out.add('next');
+    if ('nuxt' in deps) out.add('nuxt');
+    if ('astro' in deps) out.add('astro');
+    if ('@sveltejs/kit' in deps) out.add('sveltekit');
+  } catch {
+    /* package.json ilegible: solo HTML */
+  }
+  return out;
+}
+
+/** Ficheros con nombre de página que nunca lo son: pruebas, historias, tipos, estilos de módulo. */
+const NOT_A_PAGE = /\.(test|spec|stories|story|d|module)\.[a-z]+$/i;
+/** Carpetas donde un «pages/» o un «app/» no es el de la app. */
+const NOT_APP_DIRS = new Set(['components', 'component', 'test', 'tests', '__tests__', 'e2e', 'cypress', 'playwright', 'server', 'api', 'lib', 'utils', 'stories', 'docs', 'examples', 'example', 'fixtures', 'mocks', '__mocks__']);
+
+export interface FileRoute extends Route {
+  /** Carpeta del proyecto (relativa al área de trabajo, '' en la raíz): donde debe estar su package.json. */
+  root: string;
+  kind: RouteKind;
+}
+
 /**
  * La ruta que sirve un fichero del proyecto, si es una página. En un monorepo la app no está en la raíz
- * («apps/web/app/precios/page.tsx»): se van quitando carpetas por delante hasta que el resto se reconoce.
+ * («apps/web/app/precios/page.tsx»): se van quitando carpetas por delante hasta que el resto se reconoce. Quien
+ * la usa tiene que comprobar que el package.json de `root` declara el framework `kind` (B-3).
  */
-export function routeForFile(file: string): Route | undefined {
+export function routeForFile(file: string): FileRoute | undefined {
   const segs = file.replace(/\\/g, '/').replace(/^\.\//, '').split('/');
   // Dependencias y carpetas ocultas (.next, .svelte-kit…) no son páginas del proyecto, estén a la altura que estén.
   if (segs.some((s) => s === 'node_modules' || s.startsWith('.'))) return undefined;
+  if (NOT_A_PAGE.test(segs[segs.length - 1] ?? '')) return undefined;
   for (let i = 0; i < segs.length && i < 6; i++) {
+    if (segs.slice(0, i).some((d) => NOT_APP_DIRS.has(d.toLowerCase()))) return undefined;
     const r = detectRoutes([segs.slice(i).join('/')])[0];
     // Un HTML suelto solo cuenta en la raíz o en public/ del proyecto, no en cualquier subcarpeta.
-    if (r && (i === 0 || !/\.html$/.test(r.source) || segs[i] === 'public')) return { ...r, source: file };
+    if (r && (i === 0 || !/\.html$/.test(r.source) || segs[i] === 'public')) {
+      const root = segs.slice(0, segs[i] === 'public' ? i : i).join('/');
+      return { ...r, source: file, root, kind: kindOf(segs.slice(i).join('/')) };
+    }
   }
   return undefined;
+}
+
+/**
+ * Adónde lleva «seguir al editor» al abrir un fichero, o undefined si no hay que moverse.
+ *  - Solo en mosaicos de una fila (en una matriz cada fila es una ruta fija) y con rutas sin segmentos dinámicos.
+ *  - `last` es lo último que se mandó a la fila: se compara con eso y no con dónde está, porque puede ir de camino (B-1).
+ */
+export function followTarget(o: { rows: number; route: FileRoute | undefined; frameworks: Set<RouteKind>; now: string; last?: string }): string | undefined {
+  const r = o.route;
+  if (o.rows !== 1 || !r || r.dynamic || !o.frameworks.has(r.kind)) return undefined;
+  const clean = (p: string): string => {
+    const x = p.split(/[?#]/)[0] || '/';
+    return x.length > 1 && x.endsWith('/') ? x.slice(0, -1) : x;
+  };
+  return clean(o.last ?? o.now) === clean(r.path) ? undefined : r.path;
+}
+
+/** Las rutas que ofrece la lista de una fila: las del proyecto sin segmentos dinámicos (sin valor no hay adónde ir). */
+export function routeChoices(routes: readonly Route[]): string[] {
+  return ['/', ...routes.filter((r) => !r.dynamic && r.path !== '/').map((r) => r.path)];
 }
 
 /** ¿Esta ruta concreta es una instancia de la ruta con segmentos dinámicos? «/blog/hola» lo es de «/blog/[slug]». */

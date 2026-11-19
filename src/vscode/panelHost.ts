@@ -5,7 +5,8 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { DEVICES, findDevice, rotate, type Device } from '../core/devices.ts';
 import { applyEdit, isDevHost, normalizePath, parseMosaic, type Mosaic } from '../core/mosaic.ts';
-import type { Route } from '../core/routes.ts';
+import { routeChoices, type Route } from '../core/routes.ts';
+import { isAlias } from '../core/alias.ts';
 import { startProxy, type ProxyOptions, type ProxyPages, type RunningProxy } from '../core/proxy.ts';
 import type { AgentCommand, AgentEvent } from '../core/sync.ts';
 import type { CellView, PanelState, PanelText } from '../webview/panel.ts';
@@ -122,6 +123,8 @@ export class PanelHost implements vscode.Disposable {
   readonly onDidChange = this.changed.event;
   private askId = 0;
   private disposed = false;
+  /** La lista de rutas abierta, para cerrarla con el panel (B-14). */
+  private routeList: vscode.QuickPick<vscode.QuickPickItem> | undefined;
 
   private constructor(panel: vscode.WebviewPanel, proxy: RunningProxy, model: Mosaic, opts: HostOptions, extensionUri: vscode.Uri) {
     this.panel = panel;
@@ -264,20 +267,41 @@ export class PanelHost implements vscode.Disposable {
     const c = this.model.cells.find((x) => x.id === cell);
     if (!c) return;
     const now = this.paths.get(c.id) ?? c.path;
-    const known = (this.routes ? await this.routes() : []).filter((r) => !r.dynamic);
+    let known: Route[] = [];
+    try {
+      known = this.routes ? await this.routes() : [];
+    } catch {
+      /* sin rutas del proyecto: se puede escribir una */
+    }
     if (this.disposed) return;
     type Item = vscode.QuickPickItem & { path: string };
-    const base: Item[] = [{ path: '/', source: '' }, ...known.filter((r) => r.path !== '/')].map((r) => ({ label: r.path, description: r.source, path: r.path }));
+    const source = new Map(known.map((r) => [r.path, r.source]));
+    const base: Item[] = routeChoices(known).map((p) => ({ label: p, description: source.get(p) ?? '', path: p }));
     const qp = vscode.window.createQuickPick<Item>();
+    this.routeList?.hide();
+    this.routeList = qp as unknown as vscode.QuickPick<vscode.QuickPickItem>;
     qp.title = vscode.l10n.t('Route for this row');
-    qp.placeholder = vscode.l10n.t('Pick a route or type one (/pricing)');
-    qp.value = now;
+    // Vacía: con la ruta actual escrita, la lista se abría filtrada y solo enseñaba esa (B-4). Se dice en el texto.
+    qp.placeholder = vscode.l10n.t('Now on {0}. Pick a route or type one (/pricing)', now);
+    const target = new URL(this.model.target);
+    const toPath = (typed: string): string => {
+      // La dirección completa de la propia app (pegada del navegador): su ruta (B-15).
+      try {
+        const u = new URL(typed);
+        if (isAlias(u, target)) return normalizePath(u.pathname + u.search + u.hash);
+      } catch {
+        /* no es una dirección completa */
+      }
+      return normalizePath(typed);
+    };
     const offer = (v: string): void => {
       const typed = v.trim();
       // Lo escrito siempre se puede abrir, aunque no coincida con ninguna ruta detectada.
-      qp.items = typed === '' || base.some((b) => b.path === normalizePath(typed)) ? base : [{ label: normalizePath(typed), description: vscode.l10n.t('Go to this route'), path: normalizePath(typed), alwaysShow: true }, ...base];
+      qp.items = typed === '' || base.some((b) => b.path === toPath(typed)) ? base : [{ label: toPath(typed), description: vscode.l10n.t('Go to this route'), path: toPath(typed), alwaysShow: true }, ...base];
     };
-    offer(now);
+    offer('');
+    const here = qp.items.find((i) => i.path === (now.split(/[?#]/)[0] || '/'));
+    if (here) qp.activeItems = [here];
     qp.onDidChangeValue(offer);
     const chosen = await new Promise<Item | undefined>((resolve) => {
       qp.onDidAccept(() => {
@@ -288,7 +312,8 @@ export class PanelHost implements vscode.Disposable {
       qp.show();
     });
     qp.dispose();
-    if (chosen) this.drive(c.group, chosen.path);
+    if (this.routeList === (qp as unknown)) this.routeList = undefined;
+    if (chosen && !this.disposed) this.drive(c.group, chosen.path);
   }
 
   /** Se escribe una vez: la política admite cualquier sesión de ESTE proxy (http://*.localhost:<su puerto>). */
@@ -368,6 +393,7 @@ export class PanelHost implements vscode.Disposable {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.routeList?.hide();
     this.changed.dispose();
     this.moved.dispose();
     void this.proxy.close();

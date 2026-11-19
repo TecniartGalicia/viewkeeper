@@ -1,10 +1,10 @@
 // Casos de uso de la extensión. Cada comando envuelto en `wrap`: un fallo se enseña, no se traga.
 import * as vscode from 'vscode';
 import { DEVICES, parseCustomDevice, type Device } from '../core/devices.ts';
-import { MAX_CELLS, SYNC_ALL, addSession, capCells, isDevHost, isLoopback, isValidSession, matrix, normalizeTarget, parseMosaic, type Mosaic } from '../core/mosaic.ts';
-import { prepareOpen } from '../core/open.ts';
+import { MAX_CELLS, SYNC_ALL, addSession, capCells, isLoopback, isValidSession, matrix, normalizeTarget, parseMosaic, type Mosaic } from '../core/mosaic.ts';
+import { canReopenSilently, forMemory, prepareOpen, syncAfterAddressChange } from '../core/open.ts';
 import { answers, resolveTarget } from '../core/probe.ts';
-import { fillRoute, matchesRoute, routeForFile } from '../core/routes.ts';
+import { fillRoute, followTarget, frameworksIn, matchesRoute, routeForFile, type RouteKind } from '../core/routes.ts';
 import { pageKey } from '../core/sync.ts';
 import { projectRoutes } from './projectRoutes.ts';
 import { captureMosaic } from './captureFlow.ts';
@@ -41,11 +41,9 @@ type Target = { origin: string; path: string };
 /** El último mosaico de este proyecto, tal como quedó. Vive en el almacén del área de trabajo, no en git. */
 const LAST_KEY = 'viewkeeper.lastMosaic';
 
-function remember(ctx: vscode.ExtensionContext, host: PanelHost): void {
-  const m = host.mosaic();
-  if (m.cells.length === 0) return;
-  // Sin consulta ni ancla, como al guardar: pueden llevar un testigo o un dato personal.
-  void ctx.workspaceState.update(LAST_KEY, { ...m, cells: m.cells.map((c) => ({ ...c, path: c.path.split(/[?#]/)[0] || '/' })) });
+function remember(ctx: vscode.ExtensionContext, host: PanelHost): Thenable<void> | undefined {
+  const m = forMemory(host.mosaic());
+  return m ? ctx.workspaceState.update(LAST_KEY, m) : undefined;
 }
 
 function lastMosaic(ctx: vscode.ExtensionContext): Mosaic | undefined {
@@ -61,19 +59,35 @@ function followOn(): boolean {
  * (en una matriz cada fila es una ruta fija) y solo a rutas sin segmentos dinámicos: sin un valor para
  * «[id]» no hay adónde ir, y si la fila ya enseña una página de esa ruta se queda donde está.
  */
-function followEditor(ed: vscode.TextEditor | undefined): void {
+/** El último fichero seguido y la última ruta mandada, por mosaico abierto. */
+let followed: { host: PanelHost; uri: string; sent?: string } | undefined;
+
+async function followEditor(ed: vscode.TextEditor | undefined, force = false): Promise<void> {
   const host = current;
-  if (!host || !ed || !followOn() || !vscode.workspace.getWorkspaceFolder(ed.document.uri)) return;
+  const base = folder();
+  // Solo ficheros de la carpeta del mosaico (B-12).
+  if (!host || !ed || !followOn() || !base || vscode.workspace.getWorkspaceFolder(ed.document.uri)?.uri.toString() !== base.uri.toString()) return;
+  const uri = ed.document.uri.toString();
+  // Volver al mismo fichero (el foco pasó por el panel y regresó) no es una orden nueva (B-2).
+  if (!force && followed?.host === host && followed.uri === uri) return;
+  followed = { host, uri, sent: followed?.host === host ? followed.sent : undefined };
   const rows = host.groups();
-  if (rows.length !== 1) return;
   const route = routeForFile(vscode.workspace.asRelativePath(ed.document.uri, false));
-  if (!route) return;
-  const now = host.pathOfGroup(rows[0]) ?? '/';
-  if (route.dynamic || pageKey(route.path) === pageKey(now.split(/[?#]/)[0] || '/')) {
-    if (route.dynamic && !matchesRoute(route.path, now)) out.info(`follow editor: ${route.path} needs a value, staying on ${now.split(/[?#]/)[0]}`);
-    return;
+  if (!route || rows.length !== 1) return;
+  // Una página solo lo es si su proyecto usa el framework que la sirve (B-3).
+  let frameworks = new Set<RouteKind>(['html']);
+  try {
+    frameworks = frameworksIn(Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(base.uri, route.root, 'package.json'))).toString('utf8'));
+  } catch {
+    /* sin package.json en esa carpeta: solo HTML */
   }
-  host.drive(rows[0], route.path);
+  if (current !== host) return;
+  const now = host.pathOfGroup(rows[0]) ?? '/';
+  const to = followTarget({ rows: rows.length, route, frameworks, now, last: followed.sent });
+  if (route.dynamic && !matchesRoute(route.path, now)) out.info(`follow editor: ${route.path} needs a value, staying on ${now.split(/[?#]/)[0]}`);
+  if (to === undefined) return;
+  followed.sent = to;
+  host.drive(rows[0], to);
 }
 
 /** Pide una dirección escrita a mano (también de producción): https://app.ejemplo.com/ruta, localhost:3000 o 3000. */
@@ -145,7 +159,7 @@ async function openUrl(ctx: vscode.ExtensionContext): Promise<void> {
   const keepRows = rows.length > 1 && path === '/';
   const cells = now && now.cells.length > 0 ? now.cells.map((c) => (keepRows ? c : { ...c, path })) : matrix([target.path], defaultDevices());
   // De una web publicada (clics y escritura apagados por seguridad) a un servidor de desarrollo: vuelven encendidos.
-  const sync = now && isDevHost(now.target) === isDevHost(target.origin) ? now.sync : SYNC_ALL;
+  const sync = syncAfterAddressChange(now, target.origin);
   await show(ctx, { v: 1, name: new URL(target.origin).host, target: target.origin, cells, sync });
 }
 
@@ -207,11 +221,15 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true):
   host.onDidMove(() => {
     clearTimeout(moving);
     moving = setTimeout(() => remember(ctx, host), 1000);
+    // La fila llegó a lo que le mandó «seguir al editor»: ya no va de camino, y lo que haga después el usuario manda.
+    const sent = followed?.host === host ? followed.sent : undefined;
+    const row = host.groups()[0];
+    if (sent !== undefined && row !== undefined && pageKey(host.pathOfGroup(row) ?? '') === pageKey(sent) && followed) followed.sent = undefined;
   });
   out.info(`mosaic open: ${next.target}, ${next.cells.length} cells, proxy on port ${host.proxy.port}`);
   host.panel.onDidDispose(() => {
     clearTimeout(moving);
-    remember(ctx, host);
+    void remember(ctx, host);
     if (current === host) current = undefined;
     void vscode.commands.executeCommand('setContext', 'viewkeeper.open', current !== undefined);
   });
@@ -258,7 +276,7 @@ async function openDefault(ctx: vscode.ExtensionContext): Promise<void> {
   // Lo último que tenías en este proyecto, si su servidor de desarrollo sigue en marcha: se reabre sin preguntar.
   // Una web publicada, o un servidor que ya no contesta, se ofrece en la lista en vez de abrirse sola.
   const last = lastMosaic(ctx);
-  if (last && isDevHost(last.target) && (await answers(last.target))) return show(ctx, last);
+  if (last && canReopenSilently(last) && (await answers(last.target))) return show(ctx, last);
   const picked = await pickTarget(last);
   if (!picked) return;
   if ('cells' in picked) return show(ctx, picked);
@@ -426,16 +444,19 @@ export function registerCommands(ctx: vscode.ExtensionContext): void {
   });
   reg('viewkeeper.doctor', doctor);
   reg('viewkeeper.toggleFollowEditor', async () => {
-    await vscode.workspace.getConfiguration('viewkeeper').update('followEditor', !followOn(), vscode.ConfigurationTarget.Global);
-    // Recién encendido: el fichero que ya está abierto cuenta.
-    followEditor(vscode.window.activeTextEditor);
+    const cfg = vscode.workspace.getConfiguration('viewkeeper');
+    const where = cfg.inspect<boolean>('followEditor');
+    const scope = where?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder : where?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    await cfg.update('followEditor', !followOn(), scope);
+    // Recién encendido: el fichero que ya está abierto cuenta, aunque sea el último que se siguió.
+    if (followOn()) await followEditor(vscode.window.activeTextEditor, true);
   });
   let following: ReturnType<typeof setTimeout> | undefined;
   ctx.subscriptions.push(
     // Con un respiro: al pasar por varias pestañas seguidas solo cuenta en la que te quedas.
     vscode.window.onDidChangeActiveTextEditor((ed) => {
       clearTimeout(following);
-      following = setTimeout(() => followEditor(ed), 250);
+      following = setTimeout(() => void followEditor(ed), 250);
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('viewkeeper.followEditor')) current?.refresh();

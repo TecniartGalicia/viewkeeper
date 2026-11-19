@@ -96,9 +96,9 @@ export async function pruebasMejoras(api: SondaApi): Promise<Resultado[]> {
   const restaura = (): void => void Object.assign(w, original);
   const cfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration('viewkeeper');
   const raizUri = vscode.workspace.workspaceFolders?.[0]?.uri;
-  const escribe = async (rel: string): Promise<vscode.Uri> => {
+  const escribe = async (rel: string, texto = 'export default function Pagina() { return null; }\n'): Promise<vscode.Uri> => {
     const uri = vscode.Uri.joinPath(raizUri as vscode.Uri, ...rel.split('/'));
-    await vscode.workspace.fs.writeFile(uri, Buffer.from('export default function Pagina() { return null; }\n'));
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(texto));
     return uri;
   };
   /** Entrega al host del mosaico abierto un mensaje como los que manda el panel. */
@@ -111,10 +111,16 @@ export async function pruebasMejoras(api: SondaApi): Promise<Resultado[]> {
     const f: string[] = [];
     try {
       await vscode.window.tabGroups.close(mosaicos());
+      // «Seguir al editor» solo toma por página lo que el package.json de su proyecto sirve (B-3).
+      await escribe('package.json', '{"dependencies":{"next":"15.0.0"}}');
+      await escribe('apps/web/package.json', '{"dependencies":{"next":"15.0.0"}}');
+      await escribe('apps/vite/package.json', '{"dependencies":{"vite":"6.0.0"}}');
       const precios = await escribe('app/precios/page.tsx');
       const dinamica = await escribe('app/blog/[slug]/page.tsx');
       const suelto = await escribe('src/util.ts');
       const contacto = await escribe('apps/web/app/contacto/page.tsx');
+      const noPagina = await escribe('apps/vite/src/pages/Inicio.tsx');
+      const prueba = await escribe('app/precios/page.test.tsx');
       w.showInputBox = async () => `${s.origin}/`;
       await vscode.commands.executeCommand('viewkeeper.openUrl');
       if (!(await until(() => s.anchos('/') >= 3, 15000))) return [false, `el mosaico no abrió: ${JSON.stringify(s.rutas())}`];
@@ -122,15 +128,27 @@ export async function pruebasMejoras(api: SondaApi): Promise<Resultado[]> {
       await vscode.window.showTextDocument(precios, { viewColumn: vscode.ViewColumn.Beside, preview: false });
       await sleep(1200);
       if (s.anchos('/precios') !== 0) f.push('con el ajuste apagado, abrir una página movió el mosaico');
-      // Al encenderlo, el fichero que ya está delante cuenta.
-      await vscode.commands.executeCommand('viewkeeper.toggleFollowEditor');
-      if (cfg().get('followEditor') !== true) f.push('el comando no encendió el ajuste');
+      // Al encenderlo (con el botón del panel, m74), el fichero que ya está delante cuenta. El ajuste está apagado en
+      // el área de trabajo: el conmutador tiene que cambiarlo ahí, o no haría nada (B-11).
+      await cfg().update('followEditor', false, vscode.ConfigurationTarget.Workspace);
+      delPanel({ t: 'command', command: 'toggleFollowEditor' });
+      await until(() => cfg().get('followEditor') === true, 5000);
+      if (cfg().get('followEditor') !== true) f.push(`el botón del panel no encendió el ajuste: ${JSON.stringify(cfg().inspect('followEditor'))}`);
       if (!(await until(() => s.anchos('/precios') >= 3, 10000))) f.push(`al encenderlo no fue a /precios en las tres celdas: ${JSON.stringify(s.rutas())}`);
-      // Un fichero que no es una página, y una ruta con segmento dinámico: se queda donde está.
-      await vscode.window.showTextDocument(suelto, { viewColumn: vscode.ViewColumn.Beside, preview: false });
-      await vscode.window.showTextDocument(dinamica, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+      // Volver al mismo fichero tras pasar el foco al mosaico no es una orden nueva (B-2): la fila se queda donde la dejó el usuario.
+      api.current()?.drive(0, '/otra');
+      await until(() => s.anchos('/otra') >= 3, 8000);
+      s.olvida();
+      await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+      await sleep(500);
+      await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
       await sleep(1500);
-      const extra = s.rutas().filter((p) => p !== '/' && p !== '/precios');
+      if (s.anchos('/precios') !== 0) f.push('al volver al mismo fichero, la fila se recargó en /precios');
+      // Un fichero que no es una página (suelto, una prueba, un «pages/» de un proyecto sin Next) y una ruta con
+      // segmento dinámico: se queda donde está.
+      for (const u of [suelto, prueba, noPagina, dinamica]) await vscode.window.showTextDocument(u, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+      await sleep(1500);
+      const extra = s.rutas().filter((p) => p !== '/' && p !== '/precios' && p !== '/otra');
       if (extra.length) f.push(`un fichero que no lleva a ninguna ruta movió el mosaico a ${JSON.stringify(extra)}`);
       // En un monorepo, la app está dentro de otra carpeta.
       await vscode.window.showTextDocument(contacto, { viewColumn: vscode.ViewColumn.Beside, preview: false });
@@ -145,6 +163,7 @@ export async function pruebasMejoras(api: SondaApi): Promise<Resultado[]> {
     } finally {
       restaura();
       await cfg().update('followEditor', undefined, vscode.ConfigurationTarget.Global);
+      await cfg().update('followEditor', undefined, vscode.ConfigurationTarget.Workspace);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       s.close();
     }
@@ -182,6 +201,17 @@ export async function pruebasMejoras(api: SondaApi): Promise<Resultado[]> {
       const nueva = host.mosaic().cells.at(-1);
       if (nueva?.group !== primera.group || nueva?.deviceId !== 'desktop') f.push(`la celda nueva no es la pedida: ${JSON.stringify(nueva)}`);
       if (!(await until(() => s.anchos('/falla') >= 4, 10000))) f.push('la celda nueva no cargó la ruta de su fila');
+      // En una matriz, el «+» de la segunda fila añade en la segunda fila, con su ruta (m31).
+      const m = await api.open({ v: 1, name: 'matriz', target: s.origin, sync: { scroll: true, click: true, input: true, nav: true }, cells: [{ id: 'r0', deviceId: 'laptop', landscape: false, path: '/', session: 'main', group: 0 }, { id: 'r1', deviceId: 'laptop', landscape: false, path: '/segunda', session: 'main', group: 1 }] });
+      try {
+        await until(() => s.anchos('/segunda') >= 1, 10000);
+        (m as unknown as { onMessage(x: unknown, o: unknown): void }).onMessage({ t: 'pick', group: 1 }, {});
+        await until(() => m.mosaic().cells.length === 3, 5000);
+        const n = m.mosaic().cells.at(-1);
+        if (n?.group !== 1 || n?.path !== '/segunda') f.push(`el «+» de la segunda fila añadió en otra: ${JSON.stringify(n)}`);
+      } finally {
+        m.dispose();
+      }
       return [f.length === 0, f.length ? f.join('; ') : `ruta de la fila cambiada, errores contados y celda añadida a su fila: ${JSON.stringify(host.diagnostics().filter((l) => /JavaScript/.test(l)))}`];
     } finally {
       restaura();

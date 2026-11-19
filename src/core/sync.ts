@@ -87,6 +87,8 @@ export class SyncRouter {
   private readonly gestureAt = new Map<string, number>();
   private readonly pending = new Map<string, { since: number; path: string }>();
   private readonly groupPath = new Map<number, string>();
+  /** Última orden del usuario a cada fila (drive): la sigue una celda que estaba cargando, aunque «nav» esté apagada (B-9). */
+  private readonly driven = new Map<number, { path: string; at: number }>();
   private readonly navTimes = new Map<number, number[]>();
   private readonly tripped = new Map<number, number>();
   /** Última vez que se le reprodujo a cada celda un clic o un Enter. */
@@ -168,13 +170,25 @@ export class SyncRouter {
     if (!this.cells.some((c) => c.group === group)) return out;
     const prev = this.groupPath.get(group);
     if (prev === undefined || pageKey(prev) !== pageKey(path)) this.groupPath.set(group, path);
+    const prevDrive = this.driven.get(group);
+    this.driven.set(group, { path: prevDrive && pageKey(prevDrive.path) === pageKey(path) ? prevDrive.path : path, at: t });
     for (const c of this.cells) {
       if (c.group !== group) continue;
       this.expect.delete(c.id);
       this.gestureAt.delete(c.id);
       const at = this.where.get(c.id);
-      // Una celda que aún no cargó se pondrá al día sola con su primer aviso (groupPath).
-      if (at === undefined || pageKey(at) === pageKey(path)) continue;
+      // Una celda que aún no cargó se pondrá al día sola con su primer aviso (driven).
+      if (at === undefined) continue;
+      // Lo que cuenta es adónde va la celda, no dónde está (regla 4): si iba de camino a otra página y se le pide
+      // la que enseña, se le manda quedarse; el agente corta la carga en vuelo (B-1).
+      const flying = this.busy(c.id, t) ? this.pending.get(c.id)?.path : undefined;
+      if (pageKey(at) === pageKey(path)) {
+        if (flying !== undefined && pageKey(flying) !== pageKey(path)) {
+          this.pending.delete(c.id);
+          out.push({ to: c.id, cmd: { t: 'nav', path } });
+        }
+        continue;
+      }
       this.pending.set(c.id, { since: t, path });
       out.push({ to: c.id, cmd: { t: 'nav', path } });
     }
@@ -214,6 +228,14 @@ export class SyncRouter {
         // regla 3: es la llegada de una orden nuestra. Se da por cumplida con el documento listo, no con el primer aviso.
         if (ev.t !== 'hello') this.pending.delete(from);
         return [];
+      }
+      if (before === undefined) {
+        // Una orden del usuario a la fila, reciente, la sigue también una celda que estaba cargando (B-9).
+        const dr = this.driven.get(src.group);
+        if (dr && t - dr.at <= PENDING_MS && pageKey(dr.path) !== pageKey(path)) {
+          this.pending.set(from, { since: t, path: dr.path });
+          return [{ to: from, cmd: { t: 'nav', path: dr.path } }];
+        }
       }
       if (!this.opts.nav || this.isTripped(src.group)) return [];
       if (before === undefined) {

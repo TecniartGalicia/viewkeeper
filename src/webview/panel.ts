@@ -77,6 +77,10 @@ interface Live {
   errors: { kind: string; msg: string }[];
   errorCount: number;
   errorsOpen: boolean;
+  /** Saludó el agente del documento que está cargando. */
+  greeted: boolean;
+  /** El documento que enseña cargó sin agente. */
+  agentless: boolean;
 }
 const MAX_ERRORS_KEPT = 20;
 /** Celda ampliada a todo el panel (las demás siguen vivas y sincronizadas, sin verse). No es parte del mosaico. */
@@ -266,7 +270,8 @@ function paintErrors(id: string): void {
   const b = l.fig.querySelector<HTMLButtonElement>('button.err');
   if (b) {
     b.hidden = l.errorCount === 0;
-    b.textContent = String(l.errorCount);
+    // El agente deja de contar en 50 (una página en bucle de errores): se dice que hay más.
+    b.textContent = l.errorCount >= 50 ? '50+' : String(l.errorCount);
     b.title = `${l.errorCount} ${state.text.errors}`;
     b.setAttribute('aria-label', b.title);
     b.setAttribute('aria-expanded', String(l.errorsOpen));
@@ -285,9 +290,11 @@ function paintErrors(id: string): void {
 }
 
 function toggleZoom(id: string): void {
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.k;
   zoomed = zoomed === id ? undefined : id;
   if (state) for (const c of state.cells) if (live.has(c.id)) caption(c, (live.get(c.id) as Live).fig);
   layout();
+  if (focused) document.querySelector<HTMLElement>(`[data-k="${CSS.escape(focused)}"]`)?.focus();
 }
 
 function newCell(c: CellView): Live {
@@ -303,7 +310,14 @@ function newCell(c: CellView): Live {
   f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads');
   stage.append(f);
   fig.append(stage);
-  return { view: c, fig, frame: f, key: cellKey(c), errors: [], errorCount: 0, errorsOpen: false };
+  const l: Live = { view: c, fig, frame: f, key: cellKey(c), errors: [], errorCount: 0, errorsOpen: false, greeted: false, agentless: false };
+  // El agente saluda antes de que el documento termine de cargar. Un documento que carga sin saludar (una ruta que
+  // contesta JSON o texto, un error del servidor sin HTML) no tiene agente: las órdenes no le llegarían (B-10).
+  f.addEventListener('load', () => {
+    l.agentless = !l.greeted;
+    l.greeted = false;
+  });
+  return l;
 }
 
 function layout(): void {
@@ -314,7 +328,7 @@ function layout(): void {
   // Alto de cada fila: el de la ventana repartido entre filas, menos el rótulo de las celdas.
   const availH = Math.max(160, (window.innerHeight - top - 24) / Math.max(1, rows.size) - 56);
   // Con varias filas cada una lleva al final su botón «+»: se le reserva sitio.
-  const availW = Math.max(200, rootEl.clientWidth - 26 - (rows.size > 1 ? 34 : 0));
+  const availW = Math.max(200, rootEl.clientWidth - 26 - (rows.size > 1 ? 42 : 0));
   if (zoomed && !state.cells.some((c) => c.id === zoomed)) zoomed = undefined;
   rootEl.classList.toggle('ampliado', zoomed !== undefined);
   for (const c of state.cells) live.get(c.id)?.fig.classList.toggle('oculta', zoomed !== undefined && c.id !== zoomed);
@@ -324,6 +338,13 @@ function layout(): void {
     if (l) {
       const s = rowScales([c], Math.max(200, rootEl.clientWidth - 26), Math.max(160, window.innerHeight - top - 24 - 56), GAP, MIN_CELL)[0];
       size(l, c, s);
+    }
+    for (const row of rows.values()) {
+      const scales = rowScales(row, availW, availH, GAP, MIN_CELL);
+      row.forEach((o, i) => {
+        const lo = live.get(o.id);
+        if (lo && o.id !== zoomed && !lo.frame.getAttribute('width')) size(lo, o, scales[i]);
+      });
     }
     return;
   }
@@ -390,8 +411,10 @@ function render(next: PanelState): void {
       if (!l || cellKey(c) !== l.key) {
         // Otro dispositivo u otra sesión: la página tiene que arrancar de nuevo, en el mismo sitio de la fila.
         const nl = newCell(c);
-        if (l) l.fig.replaceWith(nl.fig);
-        else row.append(nl.fig);
+        if (l) {
+          l.fig.replaceWith(nl.fig);
+          if (l.errorCount > 0) vscode.postMessage({ t: 'errors', cell: c.id, n: 0 });
+        } else row.append(nl.fig);
         live.set(c.id, nl);
         loads.push([nl.frame, c.entry]);
         l = nl;
@@ -418,12 +441,28 @@ function render(next: PanelState): void {
 
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 
+/** Vuelve a entrar en la celda por su dirección de entrada (la que da el host), con otra ruta. */
+function reenter(l: Live, path: string): void {
+  try {
+    const u = new URL(l.view.entry);
+    u.searchParams.set('to', path); // el proxy la vuelve a validar (safeLocalPath)
+    l.agentless = false;
+    l.frame.src = u.href;
+  } catch {
+    /* entrada ilegible: nada */
+  }
+}
+
 window.addEventListener('message', (ev: MessageEvent) => {
   // 1) ¿Viene de una celda? Se exige ventana Y origen: una página no puede hacerse pasar por otra.
   for (const [id, l] of live) {
     if (ev.source !== l.frame.contentWindow) continue;
     const m = ev.data as (AgentEvent & { vk?: number }) | undefined;
     if (ev.origin !== l.view.origin || !m || m.vk !== 1 || typeof m.t !== 'string') return;
+    if (m.t === 'hello') {
+      l.greeted = true;
+      l.agentless = false;
+    }
     for (const d of router.route(id, m)) toCell(d.to, d.cmd);
     if (m.t === 'hello' && (l.errorCount > 0 || l.errorsOpen)) {
       l.errors = [];
@@ -488,12 +527,17 @@ window.addEventListener('message', (ev: MessageEvent) => {
     // El usuario manda la fila a otra página (desde el rótulo o desde el editor): pasa por el reparto, que
     // apunta la orden en cada celda para que su llegada no rebote.
     for (const d of router.drive(m.group, m.path)) toCell(d.to, d.cmd);
+    // Una celda sin agente no recibe la orden: se le vuelve a poner la dirección de entrada, con la ruta nueva.
+    for (const l of live.values()) if (l.view.group === m.group && l.agentless) reenter(l, m.path);
   }
   else if (m.t === 'reload') {
     // Recargar rearma el cortacircuitos y retira su aviso (N-2).
     router.rearm();
     for (const a of Array.from(rootEl.querySelectorAll('.aviso'))) a.remove();
-    for (const id of live.keys()) toCell(id, { t: 'reload' });
+    for (const [id, l] of live) {
+      if (l.agentless) reenter(l, router.currentPath(id) ?? l.view.path);
+      else toCell(id, { t: 'reload' });
+    }
   }
 });
 

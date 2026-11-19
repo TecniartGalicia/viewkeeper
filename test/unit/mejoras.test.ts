@@ -225,7 +225,8 @@ test('P-63 del fichero abierto a su ruta, también en un monorepo; y si una ruta
   assert.equal(ruta('pages/contacto.vue'), '/contacto');
   assert.equal(ruta('index.html'), '/');
   assert.equal(ruta('apps/web/public/aviso.html'), '/aviso.html');
-  assert.deepEqual(routeForFile('app/blog/[slug]/page.tsx'), { path: '/blog/[slug]', dynamic: true, source: 'app/blog/[slug]/page.tsx' });
+  assert.deepEqual(routeForFile('app/blog/[slug]/page.tsx'), { path: '/blog/[slug]', dynamic: true, source: 'app/blog/[slug]/page.tsx', root: '', kind: 'next' });
+  assert.deepEqual(routeForFile('apps/web/src/routes/about/+page.svelte'), { path: '/about', dynamic: false, source: 'apps/web/src/routes/about/+page.svelte', root: 'apps/web', kind: 'sveltekit' });
   // Lo que no es una página no lleva a ningún sitio.
   for (const no of ['app/precios/Tabla.tsx', 'app/layout.tsx', 'src/lib/util.ts', 'README.md', 'docs/notas/apunte.html', 'node_modules/x/app/page.tsx', 'pages/api/hola.ts', '.next/server/app/page.js']) assert.equal(ruta(no), undefined, no);
 

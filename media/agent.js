@@ -152,12 +152,25 @@
   // El agente se carga antes que los scripts de la página, así que oye también los de arranque. El texto
   // se queda en el panel, que lo enseña en el rótulo de la celda; al host solo llega la cuenta.
   var errs = 0;
+  function describe(a) {
+    try {
+      if (a == null) return String(a);
+      if (typeof a !== 'object' && typeof a !== 'function') return String(a);
+      if (typeof a.message === 'string' && a.message) return (a.name ? a.name + ': ' : '') + a.message;
+      if (a.nodeType === 1) return '<' + String(a.localName) + '>';
+      var j = JSON.stringify(a);
+      if (j && j !== '{}') return j;
+      return Object.prototype.toString.call(a);
+    } catch (e) {
+      return Object.prototype.toString.call(a); // cíclico o con un getter que lanza
+    }
+  }
   function report(kind, msg) {
     if (errs >= 50) return; // una página en bucle de errores no inunda el panel
     errs++;
     var text = '';
-    try { text = String(msg == null ? '' : msg).slice(0, 300); } catch (e) { text = '?'; }
-    send({ t: 'error', kind: kind, msg: text });
+    try { text = String(msg).slice(0, 300); } catch (e) { text = '?'; }
+    send({ t: 'error', kind: kind, msg: text || '(' + kind + ')' });
   }
   window.addEventListener('error', function (ev) {
     // Solo errores de JavaScript: una imagen que no carga llega con otro destino y sin mensaje.
@@ -166,16 +179,13 @@
     report('error', ev.message + where);
   });
   window.addEventListener('unhandledrejection', function (ev) {
-    var r = ev.reason;
-    report('rejection', r && r.message ? r.message : r);
+    report('rejection', describe(ev.reason));
   });
   if (window.console && typeof console.error === 'function') {
     var realConsoleError = console.error;
     console.error = function () {
       try {
-        report('console', Array.prototype.map.call(arguments, function (a) {
-          return typeof a === 'string' ? a : a && a.message ? a.message : Object.prototype.toString.call(a);
-        }).join(' '));
+        report('console', Array.prototype.map.call(arguments, describe).join(' '));
       } catch (e) { /* un argumento que no se deja leer */ }
       return realConsoleError.apply(console, arguments);
     };
@@ -409,13 +419,21 @@
   });
   window.addEventListener('popstate', navChanged);
   window.addEventListener('hashchange', navChanged);
+  var leaving = false;
   function applyNav(m) {
     if (typeof m.path !== 'string') return;
     var u;
     try { u = new URL(m.path, location.origin); } catch (e) { return; }
     if (u.origin !== location.origin) return; // nunca fuera de la celda
     var next = u.pathname + u.search + u.hash;
-    if (next !== location.pathname + location.search + location.hash) location.assign(location.origin + next);
+    if (next !== location.pathname + location.search + location.hash) {
+      leaving = true;
+      location.assign(location.origin + next);
+    } else if (leaving) {
+      // Iba de camino a otra página y le piden quedarse donde está: se corta la carga en vuelo (B-1).
+      leaving = false;
+      try { window.stop(); } catch (e) { /* nada */ }
+    }
   }
 
   // ── preguntas del panel. Solo métricas; nunca contenido de la página.

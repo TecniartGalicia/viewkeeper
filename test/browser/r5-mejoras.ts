@@ -78,6 +78,8 @@ const app = await servidorFalso((req, res) => {
   else if (u.pathname === '/ok') html(PAGINA_OK);
   else if (u.pathname === '/abs') html(PAGINA_ABS());
   else if (u.pathname === '/agente') html(PAGINA_AGENTE());
+  else if (u.pathname === '/texto') res.writeHead(200, { 'content-type': 'text/plain' }).end('esto no es una página');
+  else if (u.pathname === '/muchos') html(pagina('muchos', `<script>for (var i = 0; i < 1000; i++) setTimeout(function (k) { throw new Error('error-' + k + '-' + 'x'.repeat(600)); }, 0, i);</script>`));
   else if (u.pathname === '/recibe') {
     alApp.push(`${req.method} ${u.pathname}${u.search}`);
     // Como una app real: tras un POST, 303 a una página normal (la respuesta a un POST no lleva agente).
@@ -116,6 +118,8 @@ const escenas: Record<string, () => PanelState> = {
   pub: () => estado(px, tres('/ok'), { deployed: true }),
   abs: () => estado(px, tres('/abs')),
   agente: () => estado(px, [celda('a', 'iphone-15', '/agente')]),
+  panelB: () => estado(px, tres('/ok')),
+  matrizB: () => estado(px, [celda('r0a', 'iphone-15', '/ok', 0), celda('r0b', 'ipad-mini', '/ok', 0), celda('r0c', 'laptop', '/ok', 0), celda('r1a', 'iphone-15', '/ok', 1), celda('r1b', 'ipad-mini', '/ok', 1), celda('r1c', 'laptop', '/ok', 1)]),
 };
 const haciaHost: { e: string; m: Record<string, unknown> }[] = [];
 const panel = await servidorFalso((req, res, body) => {
@@ -312,6 +316,115 @@ try {
     await clic(s, 0, 60, 210);
     await hasta(() => alApp.length > n1, 5000);
     caso('AUD-G9', '[G9] un botón con formaction al dominio completo se va del proxy', !alApp.slice(n1).includes('POST /recibe?via=formaction'), `lo que recibió la app: ${j(alApp.slice(n1))}`);
+  }
+
+  // ══════════ Auditoría B · el panel: rutas sin HTML, errores en masa, ampliar, «+» de fila, cambiar de dispositivo
+  {
+    let d = registro.length;
+    const s = await pestana(`${panel.origin}/?e=panelB`);
+    await cargadas('/ok', d, 3);
+    await espera(400);
+    const estadoCon = (cells: Cell[]): string => `window.postMessage({ t: 'state', state: ${JSON.stringify(estado(px, cells))} }, location.origin)`;
+    const drive = (p: string): Promise<unknown> => evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '${p}' }, location.origin)`);
+
+    // B-10: una ruta que contesta texto (sin agente) no deja la fila muerta.
+    await drive('/texto');
+    await espera(2500);
+    d = registro.length;
+    await drive('/ok');
+    const vuelve = await cargadas('/ok', d, 3, 6000);
+    caso('AUD-B10', '[B-10] tras ir a una ruta que no devuelve HTML, la fila ya no obedece', !vuelve, `cargas de /ok tras la orden: ${j(veces('cargada:/ok', d))}`);
+    await drive('/texto');
+    await espera(2500);
+    d = registro.length;
+    await evalua(s, `window.postMessage({ t: 'reload' }, location.origin)`);
+    // Sin agente no hay a quién pedirle que recargue: la celda vuelve a entrar por su dirección, en la última página con agente.
+    const recarga = await cargadas('/ok', d, 3, 6000);
+    caso('AUD-B10b', '[B-10] «Recargar todo» no hace nada en una celda sin agente', !recarga, `cargas tras recargar: ${j(veces(/^cargada:/, d))}`);
+    await espera(400);
+
+    // m09, m10b: un gesto del usuario en una celda justo antes de la orden: cada celda carga una vez, sin rebotes.
+    await clic(s, 0, 300, 400);
+    d = registro.length;
+    await drive('/err');
+    await cargadas('/err', d, 3, 6000);
+    await espera(1800);
+    caso('AUD-m09', '[m09, m10b] con un gesto reciente, mandar la fila a una ruta hace que las celdas reboten', j(veces(/^cargada:/, d)) !== j({ '393': 1, '768': 1, '1366': 1 }), `cargas tras la orden: ${j(veces(/^cargada:/, d))}`);
+
+    // B-5: cambiar de dispositivo una celda con errores: el host deja de contarlos.
+    await hasta(() => alHost('panelB').some((m) => m.t === 'errors' && m.cell === 'a' && Number(m.n) > 0), 4000);
+    const h0 = haciaHost.length;
+    d = registro.length;
+    await evalua(s, estadoCon([celda('a', 'pixel-8', '/err'), celda('b', 'ipad-mini', '/err'), celda('c', 'laptop', '/err')]));
+    await hasta(() => alHost('panelB', h0).some((m) => m.t === 'errors' && m.cell === 'a'), 4000);
+    const ultimo = alHost('panelB', h0).filter((m) => m.t === 'errors' && m.cell === 'a')[0];
+    caso('AUD-B5', '[B-5] al cambiar de dispositivo, el host sigue contando los errores de la celda vieja', ultimo?.n !== 0, `primer aviso de cuenta tras el cambio: ${j(ultimo)}`);
+    await cargadas('/err', d, 1, 6000);
+    await espera(500);
+
+    // B-7, m45: ampliar con el teclado conserva el foco y marca el botón.
+    await evalua(s, `document.querySelector('[data-k="b:zoom"]').focus()`);
+    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, s);
+    await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, s);
+    await espera(300);
+    const foco = await evalua<{ k: string | undefined; pressed: string | null; pct: string; arriba: number }>(s, `(function () { var b = document.querySelector('[data-k="b:zoom"]'); var f = document.querySelector('figure[data-id="b"]'); return { k: document.activeElement && document.activeElement.dataset.k, pressed: b && b.getAttribute('aria-pressed'), pct: f.querySelector('.pct').textContent, arriba: Math.round(f.getBoundingClientRect().top - document.getElementById('mosaico').getBoundingClientRect().top) }; })()`);
+    caso('AUD-B7', '[B-7, m45] ampliar con el teclado pierde el foco o no marca el botón como pulsado', foco.k !== 'b:zoom' || foco.pressed !== 'true', j(foco));
+    caso('AUD-m75', '[m75] la celda ampliada pasa del 100 %', Number(foco.pct.replace(/[^0-9]/g, '')) > 100, `escala: ${foco.pct}`);
+    caso('AUD-m05c', '[m05c] las celdas ocultas ocupan sitio: la ampliada no queda arriba', foco.arriba > 20, `distancia de la ampliada al borde del mosaico: ${foco.arriba} px`);
+
+    // B-6: añadir una celda con otra ampliada: la página nueva nace con el ancho de su dispositivo.
+    d = registro.length;
+    await evalua(s, estadoCon([celda('a', 'pixel-8', '/err'), celda('b', 'ipad-mini', '/err'), celda('c', 'laptop', '/err'), celda('d', 'desktop', '/err')]));
+    await cargadas('/err', d, 1, 6000);
+    await espera(300);
+    const anchoNueva = registro.slice(d).filter((r) => r.ev === 'cargada:/err').map((r) => r.w);
+    caso('AUD-B6', '[B-6] una celda añadida con otra ampliada carga con un ancho que no es el suyo', !anchoNueva.includes('1920'), `anchos con los que cargó la página nueva: ${j(anchoNueva)}`);
+
+    // m50: quitar la celda ampliada deshace la ampliación.
+    await evalua(s, estadoCon([celda('a', 'pixel-8', '/err'), celda('c', 'laptop', '/err'), celda('d', 'desktop', '/err')]));
+    await espera(400);
+    const sin = await evalua<{ ocultas: number; ampliado: boolean }>(s, `({ ocultas: document.querySelectorAll('figure.oculta').length, ampliado: document.getElementById('mosaico').classList.contains('ampliado') })`);
+    caso('AUD-m50', '[m50] quitar la celda ampliada deja las demás escondidas', sin.ocultas !== 0 || sin.ampliado, j(sin));
+
+    // B-16, m14, m16: mil errores: «50+», como mucho 20 en la lista y cada uno recortado.
+    d = registro.length;
+    await evalua(s, estadoCon([celda('a', 'pixel-8', '/err')]));
+    await espera(300);
+    await drive('/muchos');
+    await cargadas('/muchos', d, 1, 6000);
+    await espera(2500);
+    await clicPanel(s, '[data-k="a:err"]');
+    await espera(300);
+    const muchos = await evalua<{ insignia: string; items: number; largo: number }>(s, `(function () { var f = document.querySelector('figure[data-id="a"]'); var li = [...f.querySelectorAll('.errs li')]; return { insignia: f.querySelector('button.err').textContent, items: li.length, largo: Math.max.apply(null, li.map(function (x) { return x.textContent.length; }).concat([0])) }; })()`);
+    caso('AUD-B16', '[B-16, m14, m16] mil errores: la insignia no dice que hay más, o la lista no se acota', muchos.insignia !== '50+' || muchos.items > 20 || muchos.items === 0 || muchos.largo > 300, j(muchos));
+  }
+
+  // ══════════ Auditoría B · el «+» de fila: en la misma línea, el último tras añadir, y fuera con 12 celdas
+  {
+    const d = registro.length;
+    const s = await pestana(`${panel.origin}/?e=matrizB`);
+    await hasta(() => registro.slice(d).filter((r) => r.ev === 'cargada:/ok').length >= 6, 9000);
+    await espera(400);
+    const mas = (): Promise<{ enLinea: boolean[]; ultimo: boolean[]; n: number }> =>
+      evalua(s, `(function () { var filas = [...document.querySelectorAll('.fila')]; return {
+        n: document.querySelectorAll('.fila > .mas').length,
+        ultimo: filas.map(function (f) { return !!f.lastElementChild && f.lastElementChild.classList.contains('mas'); }),
+        enLinea: filas.map(function (f) { var m = f.querySelector('.mas'); var c = f.querySelector('figure .escena'); if (!m || !c) return false; var a = m.getBoundingClientRect(), b = c.getBoundingClientRect(); return a.top < b.bottom && a.bottom > b.top; }) }; })()`);
+    // El auditor lo vio saltar con la ventana alta (celdas más grandes): de 970 a 1600 de ancho con 1200 de alto.
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1300, height: 1200, deviceScaleFactor: 1, mobile: false }, s);
+    await espera(600);
+    const antes = await mas();
+    caso('AUD-B8', '[B-8, m51] el «+» de fila salta a la línea de abajo', antes.enLinea.some((x) => !x), j(antes));
+    const base = [celda('r0a', 'iphone-15', '/ok', 0), celda('r0b', 'ipad-mini', '/ok', 0), celda('r0c', 'laptop', '/ok', 0), celda('r1a', 'iphone-15', '/ok', 1), celda('r1b', 'ipad-mini', '/ok', 1), celda('r1c', 'laptop', '/ok', 1)];
+    await evalua(s, `window.postMessage({ t: 'state', state: ${JSON.stringify(estado(px, [...base, celda('r1d', 'pixel-8', '/ok', 1)]))} }, location.origin)`);
+    await espera(400);
+    const tras = await mas();
+    caso('AUD-m35', '[m35] tras añadir a una fila, su «+» ya no es el último', tras.ultimo.some((x) => !x), j(tras));
+    const doce = [...base, ...['pixel-8', 'galaxy-s24', 'iphone-se'].map((dv, i) => celda('x' + i, dv, '/ok', 0)), ...['pixel-8', 'galaxy-s24', 'iphone-se'].map((dv, i) => celda('y' + i, dv, '/ok', 1))];
+    await evalua(s, `window.postMessage({ t: 'state', state: ` + JSON.stringify(estado(px, doce)) + ` }, location.origin)`);
+    await espera(400);
+    const lleno = await mas();
+    caso('AUD-m36', '[m36] con 12 celdas sigue habiendo «+»', lleno.n !== 0, j(lleno));
   }
 
   // ══════════ M1 · una web publicada se anuncia en la barra
