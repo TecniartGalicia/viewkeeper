@@ -31,7 +31,7 @@ export interface PanelText {
   save: string;
   session: string;
   matrix: string;
-  rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
+  rotate: string;
   remove: string;
   empty: string;
   session1: string;
@@ -82,7 +82,7 @@ const ICONS: Record<string, string> = {
   save: '<path d="M3 2.5h8l2 2v9H3z"/><path d="M5 2.5v3.5h5V2.5M5 13.5V9.5h6v4"/>',
   user: '<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/>',
   grid: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx=".8"/><rect x="9" y="2.5" width="4.5" height="4.5" rx=".8"/><rect x="2.5" y="9" width="4.5" height="4.5" rx=".8"/><rect x="9" y="9" width="4.5" height="4.5" rx=".8"/>',
-  rotate: '<rect x="4.5" y="2" width="7" height="12" rx="1.5" transform="rotate(90 8 8)"/><path d="M2.5 5.5a6 6 0 0 1 3-3"/><path d="M2.3 3v2.6h2.6"/>',
+  rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
 };
 function icon(name: string): SVGSVGElement {
