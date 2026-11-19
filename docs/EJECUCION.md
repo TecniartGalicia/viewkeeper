@@ -76,11 +76,11 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 - **Auditoría independiente de las fases 2 y 3: 19 hallazgos** (1 alto, 7 medios, 11 bajos; 15 reproducidos ejecutando). El alto: con el editor partido en dos, las celdas bajaban al 5 % de alto. Todos corregidos en `c7fb4af` y comprobados con los guiones del propio auditor: su banco del panel sin un solo defecto y su sonda de comandos dentro de VS Code con todos los casos resueltos. Quedan, aceptados: el botón «Añadir dispositivo» añade a la primera fila (no sabe de qué fila hablas), y `localhost` y `127.0.0.1` son dos orígenes distintos para el aviso de API.
 - Al pasarlo todo se vio que dos de las tres partes del banco de navegador terminaban con `process.exit(0)` antes de mirar su resultado: no podían fallar. Corregido; el banco son **64 casos**, no 27.
 - Repo subido a `TecniartGalicia/viewkeeper` (`71a80a8`).
-
-## Si esto se retoma en otra sesión
-
-Todo cerrado. Siguiente versión: subir versión y CHANGELOG, etiqueta `vX.Y.Z`; `node scripts/gh-runs.mjs release --esperar` sigue la publicación. Lo pendiente está en `docs/ENTREGA.md`.
 - Criterio cumplido: P-40 (el flujo de publicación rechaza un paquete con ficheros de prueba; el VSIX solo lleva extensión, panel, agente, icono y documentos), P-42 e I-4 en VSCodium, «en Marketplace y Open VSX el mismo día, con GIF»: `v0.1.0` publicada el 19-11 en las dos tiendas y en GitHub Release, instalada desde el Marketplace en una carpeta limpia con `code --install-extension`. P-41 (20 pasadas con Vite y Next) no se repitió: las apps de prueba de la Fase 0 se borraron; las 18 de la Fase 0 siguen siendo la referencia.
 
 ### Fase 5 — cerrada el 2026-11-19
 - Borradores en `docs/LANZAMIENTO.md`. Publicarlos es del titular.
+
+## Si esto se retoma en otra sesión
+
+Todo cerrado. Siguiente versión: subir versión y CHANGELOG, etiqueta `vX.Y.Z`; `node scripts/gh-runs.mjs release --esperar` sigue la publicación. Lo pendiente está en `docs/ENTREGA.md`.
