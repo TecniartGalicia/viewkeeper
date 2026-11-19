@@ -142,7 +142,20 @@ try {
   await espera(800);
   const foco = await ev<string>(`(document.activeElement && (document.activeElement.tagName + ' ' + (document.activeElement.textContent || ''))) || 'nada'`);
   const pulsado = await ev<string>(`Array.from(document.querySelectorAll('#barra button')).find(b => b.textContent === 'scroll').getAttribute('aria-pressed')`);
-  informe('B-3 foco tras un interruptor', !foco.includes('scroll'), `scroll ahora aria-pressed=${pulsado}; el foco quedó en: ${foco}`);
+  informe('B-3 foco tras un interruptor', foco.startsWith('BODY'),`scroll ahora aria-pressed=${pulsado}; el foco quedó en: ${foco}`);
+
+  // B-3b · teclado sobre «Añadir dispositivo»: una flecha abajo con el desplegable cerrado
+  const n0 = model.cells.length;
+  await ev(`(document.querySelector('#barra select').focus(), 0)`);
+  await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 }, s);
+  await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 }, s);
+  await espera(800);
+  const foco2 = await ev<string>(`document.activeElement ? document.activeElement.tagName : 'nada'`);
+  informe('B-3b flecha en «Añadir dispositivo»', model.cells.length > n0, `celdas ${n0} → ${model.cells.length}; foco en ${foco2}`);
+  // y deshacerlo para no estorbar a lo siguiente
+  model = { ...model, cells: model.cells.slice(0, n0) };
+  await empuja();
+  await espera(800);
 
   // B-4 · girar no recarga; cambiar de dispositivo recarga SOLO esa celda
   const c0 = { ...cargas };
@@ -181,7 +194,29 @@ try {
   const m12 = await medidas();
   const d12 = await docAlto();
   const lineas = new Set(m12.map((x) => x.top)).size;
-  informe('B-7 doce celdas en 900 px', d12.sh > d12.ih + 4, `${lineas} líneas de celdas, alto ${m12[0]?.h}px cada una, documento ${d12.sh} px en ${d12.ih} px de ventana (escala ${m12[0]?.pct})`);
+  informe('B-7 doce celdas en 900 px', m12[0]?.h < 100, `${lineas} líneas de celdas, alto ${m12[0]?.h}px cada una, documento ${d12.sh} px en ${d12.ih} px de ventana (escala ${m12[0]?.pct})`);
+
+  // B-8 · los tres dispositivos por defecto en un panel de 700 px (editor partido en dos) y cinco en 1200 px
+  const tres = ['iphone-15', 'ipad-mini', 'laptop'].map((d, i) => ({ id: 't' + i, deviceId: d, landscape: false, path: '/', session: 'main', group: 0 }));
+  for (const [w, cells] of [[700, tres], [760, tres], [1200, ['iphone-se', 'iphone-15', 'pixel-8', 'ipad-mini', 'laptop'].map((d, i) => ({ id: 'f' + i, deviceId: d, landscape: false, path: '/', session: 'main', group: 0 }))]] as const) {
+    await tam(w, 900);
+    model = { ...model, cells: cells as Cell[] };
+    await empuja();
+    await espera(1200);
+    const mm = await medidas();
+    informe(`B-8 ${cells.length} celdas en ${w}×900`, mm.some((x) => x.h < 100), `alto en pantalla ${JSON.stringify(mm.map((x) => x.h))} px, escalas ${JSON.stringify(mm.map((x) => x.pct))}, líneas ${new Set(mm.map((x) => x.top)).size}`);
+  }
+
+  // B-1c · crecer solo en alto (cerrar el terminal): ¿vuelven a crecer las celdas?
+  model = { ...model, cells: tres };
+  await tam(1400, 500);
+  await empuja();
+  await espera(1000);
+  const a500 = await medidas();
+  await tam(1400, 950);
+  await espera(1000);
+  const a950 = await medidas();
+  informe('B-1c crecer en alto', JSON.stringify(a500) === JSON.stringify(a950), `a 500 px: ${JSON.stringify(a500.map((x) => x.h))}; tras crecer a 950 px: ${JSON.stringify(a950.map((x) => x.h))}`);
 } finally {
   ws.close();
   chrome.kill();

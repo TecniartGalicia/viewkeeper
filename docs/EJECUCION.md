@@ -71,6 +71,8 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 ### Fase 4 — en curso
 - Documentación, icono (Codex), captura y GIF grabados con la extensión de verdad sobre una tienda de demostración, CI y publicación con reintentos y la release de GitHub antes que las tiendas. Repo `TecniartGalicia/viewkeeper` creado, con `VSCE_PAT` y `OVSX_PAT`.
 - Commits: `24de59e`.
+- I-4 y P-42: la suite entera en **VSCodium 1.143** (descargado portátil), 8 de 8; sin reescribir cookies no llega ninguna, igual que en VS Code. Cursor no se ha probado.
+- Borradores de lanzamiento en `docs/LANZAMIENTO.md` (fase 5).
 - Pendiente antes de etiquetar: aplicar la auditoría independiente de las fases 2 y 3.
 
 ## Si esto se retoma en otra sesión

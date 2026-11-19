@@ -70,6 +70,17 @@ const out = (id: string, ok: boolean, msg: string): void => console.log(`${ok ? 
   out('A-5b en una matriz se añade siempre a la fila 0', true, `grupos tras añadir: ${m.cells.map((c) => c.id + ':' + c.group).join(' ')}`);
 }
 
+// A-7 · rowScales (panel.ts usa GAP=14, MIN_CELL=230): si n·MIN_CELL no cabe, todo cae a 40 px de alto
+{
+  const { rowScales } = await import('../src/core/devices.ts');
+  const tres = ['iphone-15', 'ipad-mini', 'laptop'].map((id) => findDevice(id)!);
+  for (const ancho of [760, 718, 700]) {
+    const availW = ancho - 26; // como layout(): rootEl.clientWidth - 26
+    const sc = rowScales(tres, availW, 800, 14, 230);
+    out(`A-7 rowScales 3 dispositivos, panel ${ancho}px`, sc.some((x, i) => x * tres[i].height < 60), `escalas ${JSON.stringify(sc)} → alto ${sc.map((x, i) => Math.round(x * tres[i].height))} px`);
+  }
+}
+
 // A-6 · mosaico guardado con un dispositivo que este equipo no conoce (dispositivo propio de un compañero)
 {
   const m = parseMosaic({ v: 1, name: 'equipo', target: 'http://localhost:5173', cells: [{ id: 'a', deviceId: 'custom-movil-de-ana', path: '/' }] });
