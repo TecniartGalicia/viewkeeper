@@ -9,11 +9,14 @@
   // Los orígenes de la propia app (su dominio con y sin «www», por http y https). Dentro de la celda la app
   // vive en el origen del proxy: lo que la nombre con su dominio completo se convierte en una ruta local.
   var TARGETS = typeof __VK_TARGETS === 'object' && __VK_TARGETS ? __VK_TARGETS : [];
+  function base() { try { return document.baseURI || location.href; } catch (e) { return location.href; } }
+  // Devuelve la dirección equivalente en el origen de la celda, siempre absoluta (A-1: una ruta «//host/…»
+  // devuelta tal cual se leería como otro servidor; A-4: una ruta relativa se resolvería contra un <base>).
   function localPath(u) {
     try {
-      var url = new URL(String(u), location.href);
+      var url = new URL(String(u), base());
       if (url.origin === location.origin || TARGETS.indexOf(url.origin) < 0) return null;
-      return url.pathname + url.search + url.hash;
+      return location.origin + url.pathname + url.search + url.hash;
     } catch (e) { return null; }
   }
   var name = String(window.name || '');
@@ -28,16 +31,16 @@
     var own = localPath(u);
     if (own !== null) return own;
     try {
-      var url = new URL(String(u), location.href);
+      var url = new URL(String(u), base());
       var i = APIS.indexOf(url.origin);
-      return i < 0 ? null : '/__viewkeeper/api/' + i + url.pathname + url.search;
+      return i < 0 ? null : location.origin + '/__viewkeeper/api/' + i + url.pathname + url.search;
     } catch (e) { return null; }
   }
   // Una llamada a otro origen que falla suele ser CORS: la API admite el origen de la app y no el de la celda.
   // De esta máquina, por http o https; de fuera, solo https (lo único que el proxy acepta reenviar).
   function isLocalOther(u) {
     try {
-      var url = new URL(String(u), location.href);
+      var url = new URL(String(u), base());
       if (url.origin === location.origin) return false;
       return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname) ? /^https?:$/.test(url.protocol) : url.protocol === 'https:';
     } catch (e) { return false; }
@@ -103,22 +106,29 @@
   // normal: el enrutador de una SPA, el menú contextual, todo ve un enlace de la propia página.
   function attr(el, name) { try { return el.getAttribute(name); } catch (e) { return null; } }
   function fixLink(ev) {
+    if (ev.button === 1 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.type === 'auxclick') return;
     var t = ev.target;
     var a = t && t.closest ? t.closest('a[href],area[href]') : null;
     if (!a) return;
+    var tg = attr(a, 'target');
+    if (tg && tg.toLowerCase() !== '_self') return;
     var p = localPath(attr(a, 'href'));
     if (p !== null) a.setAttribute('href', p);
   }
   ['pointerdown', 'click', 'auxclick', 'keydown'].forEach(function (k) { document.addEventListener(k, fixLink, true); });
-  document.addEventListener('submit', function (ev) {
-    var f = ev.target;
-    var by = ev.submitter;
+  function fixForm(f, by) {
     if (by && attr(by, 'formaction')) { var q = localPath(attr(by, 'formaction')); if (q !== null) by.setAttribute('formaction', q); }
     if (f && attr(f, 'action')) { var p = localPath(attr(f, 'action')); if (p !== null) f.setAttribute('action', p); }
-  }, true);
+  }
+  document.addEventListener('submit', function (ev) { fixForm(ev.target, ev.submitter); }, true);
+  try {
+    var realSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () { fixForm(this, null); return realSubmit.apply(this, arguments); };
+  } catch (e) { /* sin permiso */ }
   // Lo que navega por código (location.href = …) no pasa por un enlace: se caza con la API de navegación.
   // A la propia app, se va a la ruta local; a otra web, no se va (la celda quedaría en blanco) y se avisa
   // al panel con el origen, para que diga qué ha pasado.
+  var lefts = 0;
   if (window.navigation && typeof window.navigation.addEventListener === 'function') {
     window.navigation.addEventListener('navigate', function (ev) {
       if (!ev.cancelable || ev.hashChange || ev.downloadRequest) return;
@@ -126,14 +136,15 @@
       try { dest = new URL(ev.destination.url); } catch (e) { return; }
       if (dest.origin === location.origin || !/^https?:$/.test(dest.protocol)) return;
       var p = localPath(dest.href);
-      if (p !== null) {
-        if (ev.formData) return; // un formulario con cuerpo: ya se corrigió en «submit»; si no, se deja estar
+      if (p !== null && !ev.formData) {
         ev.preventDefault();
         if (ev.navigationType === 'replace') location.replace(p); else location.assign(p);
         return;
       }
+      // A otra web, o un envío con cuerpo al dominio propio que no pasó por «submit» ni por form.submit():
+      // no se puede repetir aquí con su cuerpo, así que no se va y se dice (antes la celda quedaba en blanco).
       ev.preventDefault();
-      send({ t: 'left', origin: dest.origin });
+      if (lefts++ < 20) send({ t: 'left', origin: dest.origin });
     });
   }
 
@@ -388,7 +399,13 @@
   function navChanged() { gestureSent = 0; send({ t: 'nav', url: here() }); }
   ['pushState', 'replaceState'].forEach(function (k) {
     var orig = history[k];
-    history[k] = function () { var r = orig.apply(this, arguments); navChanged(); return r; };
+    history[k] = function () {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length > 2 && args[2] != null) { var p = localPath(args[2]); if (p !== null) args[2] = p; }
+      var r = orig.apply(this, args);
+      navChanged();
+      return r;
+    };
   });
   window.addEventListener('popstate', navChanged);
   window.addEventListener('hashchange', navChanged);
@@ -398,7 +415,7 @@
     try { u = new URL(m.path, location.origin); } catch (e) { return; }
     if (u.origin !== location.origin) return; // nunca fuera de la celda
     var next = u.pathname + u.search + u.hash;
-    if (next !== location.pathname + location.search + location.hash) location.assign(next);
+    if (next !== location.pathname + location.search + location.hash) location.assign(location.origin + next);
   }
 
   // ── preguntas del panel. Solo métricas; nunca contenido de la página.

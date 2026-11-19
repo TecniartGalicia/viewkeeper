@@ -130,8 +130,10 @@ test('P-06 lo que no es un documento pasa intacto y sin agente', async () => {
 
 test('P-07 cookies: se reescriben, la nuestra no se filtra y la app no puede pisarla', async () => {
   const sc = (await get('/login')).headers['set-cookie'] ?? [];
-  assert.equal(sc.length, 4);
-  for (const c of sc) {
+  // Las marcas de Domain del proxy (__vk_d_*) van aparte: aquí, las cookies de la app.
+  const propias = sc.filter((c) => !c.startsWith('__vk_d_'));
+  assert.equal(propias.length, 4);
+  for (const c of propias) {
     assert.match(c, /; SameSite=None; Secure$/);
     assert.doesNotMatch(c, /domain=/i);
     assert.doesNotMatch(c, /samesite=(lax|strict)/i);

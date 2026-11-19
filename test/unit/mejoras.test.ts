@@ -2,66 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { aliasOrigins, isAlias } from '../../src/core/alias.ts';
 import { SYNC_ALL, isDevHost, syncForTarget } from '../../src/core/mosaic.ts';
 import { resolveTarget } from '../../src/core/probe.ts';
 import { leavesTo, startProxy, type RunningProxy } from '../../src/core/proxy.ts';
 
-interface Res {
-  status: number;
-  headers: http.IncomingHttpHeaders;
-  body: string;
-}
-/** Petición a una celda del proxy, como la haría el iframe (documento) o un fetch de la página. */
-export function cell(p: RunningProxy, path: string, o: { session?: string; doc?: boolean; method?: string; body?: string; headers?: Record<string, string>; cookie?: string } = {}): Promise<Res> {
-  const headers: Record<string, string> = {
-    host: `s-${o.session ?? 'main'}-${p.tag}.localhost:${p.port}`,
-    cookie: `${p.gateCookie}=${p.token}${o.cookie ? '; ' + o.cookie : ''}`,
-    ...(o.doc === false ? { 'sec-fetch-dest': 'empty', accept: '*/*' } : { 'sec-fetch-dest': 'iframe', accept: 'text/html' }),
-    ...o.headers,
-  };
-  return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: p.port, path, method: o.method ?? 'GET', headers }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.end(o.body);
-  });
-}
-export interface Fake {
-  origin: string;
-  port: number;
-  seen: { method: string; url: string; headers: http.IncomingHttpHeaders }[];
-  close(): Promise<void>;
-}
-export function fake(handle: (req: http.IncomingMessage, res: http.ServerResponse, self: Fake) => void): Promise<Fake> {
-  const seen: Fake['seen'] = [];
-  const server = http.createServer((req, res) => {
-    seen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers });
-    handle(req, res, self);
-  });
-  let self: Fake;
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const port = (server.address() as AddressInfo).port;
-      self = {
-        origin: `http://localhost:${port}`,
-        port,
-        seen,
-        close: () =>
-          new Promise<void>((done) => {
-            server.closeAllConnections();
-            server.close(() => done());
-          }),
-      };
-      resolve(self);
-    });
-  });
-}
+import { cell, fake, type Res } from './ayuda.ts';
+
 const html = (res: http.ServerResponse, body: string, headers: http.OutgoingHttpHeaders = {}): void => void res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...headers }).end(`<!doctype html><html><head><title>t</title></head><body>${body}</body></html>`);
 
 // ───────────────────────── Fase A
@@ -373,40 +320,74 @@ test('P-67 una API de otro servidor: no recibe la sesión de la app, y lo que el
   // Índices: 0 = cubierta por el Domain de la app, 1 = otro servidor, 2 = como hasta ahora (otro puerto de esta máquina).
   const px = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: [{ origin: apiLocalhost, cookies: 'own' }, { origin: apiOtroNombre, cookies: 'own' }] });
   const viejo = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: [apiLocalhost] });
-  const ck = 'sesion=SECRETA; sso=COMPARTIDA; otra=X';
-  const pide = async (p: RunningProxy, n: number, ruta: string, session = 'main', cookie = ck): Promise<{ cookie: string; origin: string | null; set: unknown }> => {
+  // El bote de cookies de la celda, como el del navegador: guarda lo que le ponen (también las marcas de Domain del proxy).
+  const bote = new Map<string, string>();
+  const guarda = (sc: string | string[] | undefined): void => {
+    for (const c of Array.isArray(sc) ? sc : sc ? [sc] : []) {
+      const first = c.split(';')[0];
+      const k = first.slice(0, first.indexOf('=')).trim();
+      if (/;\s*max-age=0/i.test(c)) bote.delete(k);
+      else bote.set(k, first.slice(first.indexOf('=') + 1));
+    }
+  };
+  const ck = (): string => [...bote].map(([k, v]) => `${k}=${v}`).join('; ');
+  const pide = async (p: RunningProxy, n: number, ruta: string, session = 'main', cookie = ck()): Promise<{ cookie: string; origin: string | null; set: unknown }> => {
     const r = await cell(p, `/__viewkeeper/api/${n}${ruta}`, { doc: false, session, cookie, headers: { origin: p.originFor(session) } });
     assert.equal(r.status, 200, `${ruta}: ${r.body}`);
     return { ...(JSON.parse(r.body) as { cookie: string; origin: string | null }), set: r.headers['set-cookie'] };
   };
+  const doc = async (ruta: string): Promise<Res> => {
+    const r = await cell(px, ruta, { cookie: ck() });
+    guarda(r.headers['set-cookie']);
+    return r;
+  };
   try {
     // Antes de que la app ponga nada con Domain: a la API no le llega ninguna cookie de la celda.
+    bote.set('previa', 'P');
     assert.equal((await pide(px, 1, '/datos')).cookie, '');
     assert.equal((await pide(px, 0, '/datos')).cookie, '');
-    // La app inicia sesión y pone una cookie para todo «localhost».
-    await cell(px, '/entrar');
+    // La app inicia sesión y pone una cookie para todo «localhost»: el proxy deja una marca en el navegador.
+    const entrar = await doc('/entrar');
+    const marcas = (entrar.headers['set-cookie'] ?? []).filter((c) => c.startsWith('__vk_d_'));
+    assert.deepEqual(marcas.map((c) => c.split(';')[0]).sort(), ['__vk_d_otra=ejemplo.org', '__vk_d_sso=localhost'], 'una marca por cada cookie con Domain, y ninguna para las demás');
     const cubierta = await pide(px, 0, '/datos');
     assert.equal(cubierta.cookie, 'sso=COMPARTIDA', 'solo la que la app puso con un Domain que cubre a la API');
     assert.equal(cubierta.origin, app.origin, 'la API ve el origen de la app');
     assert.equal((await pide(px, 1, '/datos')).cookie, '', 'a otro servidor, ninguna');
+    // Sin la cookie de entrada (un proceso local que falsifica «same-origin»): ni bote ni cookies de la app (A-2).
+    const falso = await cell(px, '/__viewkeeper/api/0/datos', { doc: false, cookie: ck().replace(new RegExp(`${px.gateCookie}=[^;]*;?\\s*`), ''), headers: { 'sec-fetch-site': 'same-origin', cookie: ck() } });
+    assert.equal(JSON.parse(falso.body).cookie, '', 'sin la cookie de entrada no viaja nada');
     // La API pone las suyas: no llegan a la celda, y vuelven a esa API (y solo a ella) en la siguiente llamada.
     const login = await pide(px, 1, '/login');
     assert.equal(login.set, undefined, 'el Set-Cookie de la API no llega a la celda');
     assert.equal((await pide(px, 1, '/datos')).cookie, 'apisid=A1; tema=oscuro');
     assert.equal((await pide(px, 0, '/datos')).cookie, 'sso=COMPARTIDA', 'el bote de una API no se mezcla con el de otra');
     assert.equal((await pide(px, 1, '/datos', 'admin')).cookie, '', 'ni con el de otra sesión del mosaico');
-    const app2 = await cell(px, '/', { cookie: ck });
+    const sinGate = await cell(px, '/__viewkeeper/api/1/datos', { doc: false, headers: { 'sec-fetch-site': 'same-origin', cookie: '' } });
+    assert.equal(JSON.parse(sinGate.body).cookie, '', 'el bote no se entrega a quien no trae la cookie de entrada (A-2)');
+    const app2 = await doc('/');
     assert.equal(app2.status, 200);
     assert.ok(!JSON.stringify(app.seen.at(-1)?.headers).includes('apisid'), 'las cookies de la API no viajan a la app');
+    assert.ok(!JSON.stringify(app.seen.at(-1)?.headers).includes('__vk_'), 'ni las marcas del proxy');
+    // Un proxy nuevo (se reabre el mosaico): las marcas siguen en el navegador y la cookie cubierta sigue viajando (A-5).
+    const otro = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: [{ origin: apiLocalhost, cookies: 'own' }] });
+    try {
+      const r = await cell(otro, '/__viewkeeper/api/0/datos', { doc: false, cookie: ck(), headers: { origin: otro.originFor('main') } });
+      assert.equal(JSON.parse(r.body).cookie, 'sso=COMPARTIDA');
+    } finally {
+      await otro.close();
+    }
     // La API caduca una: sale del bote.
     await pide(px, 1, '/logout');
     assert.equal((await pide(px, 1, '/datos')).cookie, 'tema=oscuro');
-    // La app caduca la suya con Domain: deja de viajar, aunque la celda aún la mande.
-    await cell(px, '/salir');
+    // La app caduca la suya con Domain: su marca se borra y deja de viajar, aunque la celda aún la mande.
+    const salir = await doc('/salir');
+    assert.ok((salir.headers['set-cookie'] ?? []).some((c) => /^__vk_d_sso=; .*Max-Age=0/.test(c)), 'se borra la marca');
+    bote.set('sso', 'COMPARTIDA');
     assert.equal((await pide(px, 0, '/datos')).cookie, '');
     // Sin cambios para lo que ya había: otro puerto de esta máquina recibe las cookies de la celda, como el navegador.
-    assert.equal((await pide(viejo, 0, '/datos')).cookie, ck);
-    assert.match(String((await pide(viejo, 0, '/login')).set), /apisid=A1/);
+    assert.equal((await pide(viejo, 0, '/datos', 'main', 'sesion=SECRETA; sso=COMPARTIDA')).cookie, 'sesion=SECRETA; sso=COMPARTIDA');
+    assert.match(String((await pide(viejo, 0, '/login', 'main', 'a=1')).set), /apisid=A1/);
   } finally {
     await px.close();
     await viejo.close();

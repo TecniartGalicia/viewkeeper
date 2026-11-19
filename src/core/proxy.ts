@@ -74,10 +74,45 @@ export function parseApis(list: readonly (string | ApiSpec)[] | undefined): { ur
   return out;
 }
 
+/** Prefijo de las marcas «esta cookie de la app se puso con este Domain». Empieza por GATE_PREFIX: nunca llegan a la app. */
+export const DOMAIN_MARK = '__vk_d_';
+const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+const DOMAIN_VALUE = /^[a-z0-9.-]{1,253}$/;
+
+/**
+ * La marca que acompaña a un Set-Cookie de la app: con Domain, la crea (con la misma caducidad); sin Domain o
+ * caducado, la borra. undefined si el nombre no es un nombre de cookie normal (no se marca nada raro).
+ */
+export function domainMark(c: string): string | undefined {
+  const name = c.split('=')[0].trim();
+  // Las cookies con nombre de las del proxy no llegan a la celda (rewriteResponseHeaders): tampoco se marcan.
+  if (!COOKIE_NAME.test(name) || name.startsWith(GATE_PREFIX)) return undefined;
+  const d = cookieDomain(c);
+  const base = `${DOMAIN_MARK}${name}`;
+  if (d === undefined || !DOMAIN_VALUE.test(d) || expiresCookie(c)) return `${base}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
+  const life = /;\s*(max-age=-?\d+|expires=[^;]+)/i.exec(c);
+  return `${base}=${d}; Path=/; HttpOnly; SameSite=None; Secure${life ? '; ' + life[1] : ''}`;
+}
+
+/** Las marcas que manda el navegador: nombre de la cookie de la app → su Domain. */
+export function readDomainMarks(header: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of (header ?? '').split(';')) {
+    const p = part.trim();
+    if (!p.startsWith(DOMAIN_MARK)) continue;
+    const i = p.indexOf('=');
+    const name = p.slice(DOMAIN_MARK.length, i);
+    const d = p.slice(i + 1).trim().toLowerCase();
+    if (i > 0 && COOKIE_NAME.test(name) && DOMAIN_VALUE.test(d)) out.set(name, d);
+  }
+  return out;
+}
+
 /** El Domain de un Set-Cookie, en minúsculas y sin el punto inicial; undefined si no lo lleva. */
 export function cookieDomain(c: string): string | undefined {
-  const m = /;\s*domain=\.?([^;\s]+)/i.exec(c);
-  return m ? m[1].toLowerCase() : undefined;
+  let d: string | undefined;
+  for (const m of c.matchAll(/;\s*domain=\.?([^;\s]+)/gi)) d = m[1].toLowerCase();
+  return d;
 }
 
 /** ¿Una cookie con ese Domain se le manda a ese servidor? El propio dominio o un subdominio suyo. */
@@ -111,7 +146,8 @@ export interface RunningProxy {
   token: string;
   /** Etiqueta estable derivada del destino: la misma app conserva sus cookies entre aperturas. */
   tag: string;
-  gateCookie: string;
+  /** Nombre de la cookie de entrada. Lleva el puerto que ve el navegador: cambia con setPublicPort. */
+  readonly gateCookie: string;
   /** Origen que ve la celda: http://s-<sesion>-<etiqueta>.localhost:<puerto> */
   originFor(session: string): string;
   /**
@@ -262,7 +298,9 @@ export function rewriteLocation(loc: string, ctx: Ctx): string {
   const same = u.origin === t.origin || (u.protocol === t.protocol && u.port === t.port && isLoopbackHost(u.hostname) && isLoopbackHost(t.hostname)) || isAlias(u, t);
   if (!same) return loc;
   // Una ruta relativa ya vale tal cual; solo se toca lo que nombraba al servidor.
-  if (!/^[a-z][a-z0-9+.-]*:|^\/\//i.test(loc.trim())) return loc;
+  // El navegador ignora tabuladores y saltos y lee «\\» como «/»: «/\\host/x» o «h<TAB>ttp://host» también nombran un servidor (A-11).
+  const raw = loc.replace(/[\t\n\r]/g, '').trim();
+  if (!/^[a-z][a-z0-9+.-]*:|^[\\/]{2}/i.test(raw)) return loc;
   return ctx.proxyOrigin + u.pathname + u.search + u.hash;
 }
 
@@ -425,10 +463,8 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   const apis = parseApis(opts.apiOrigins);
   const targets = aliasOrigins(opts.target);
   const seenCookies = new Map<string, Map<string, string>>();
-  /** Bote de cada API en modo 'own', por sesión: «sesión|índice» → nombre → valor. */
-  const apiJars = new Map<string, Map<string, string>>();
-  /** Cookies que la app puso con Domain, por sesión: nombre → dominio. Son las únicas suyas que viajan a una API 'own'. */
-  const domainCookies = new Map<string, Map<string, string>>();
+  /** Bote de cada API en modo 'own', por sesión: «sesión|índice» → nombre → valor y caducidad (ms, o Infinity). */
+  const apiJars = new Map<string, Map<string, { v: string; exp: number }>>();
   const tickets = new Map<string, { session: string; expires: number }>();
   const notes: string[] = [];
   const note = (line: string): void => {
@@ -450,21 +486,26 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   /** El origen por el propio puerto del proxy: para quien corre en la misma máquina que él (la captura). */
   const innerOrigin = (session: string): string => `http://s-${session}-${tag}.localhost:${port}`;
   /** La sesión de un Host, entre por el puerto propio o por el reenviado. Cualquier otro Host se rechaza. */
-  const sessionOf = (host: string | undefined): string | null => sessionFromHost(host, port, tag) ?? (publicPort ? sessionFromHost(host, publicPort, tag) : null);
+  // Por el puerto 80 el navegador manda el Host sin puerto (A-16).
+  const sessionOf = (host: string | undefined): string | null =>
+    sessionFromHost(host, port, tag) ?? (publicPort ? sessionFromHost(publicPort === 80 && host && !/:\d+$/.test(host) ? host + ':80' : host, publicPort, tag) : null);
   /** El origen por el que llegó esta petición (ya validado por sessionOf): es el que la página tiene por suyo. */
   const cameBy = (req: http.IncomingMessage): string => `http://${String(req.headers.host).toLowerCase()}`;
   const scriptTag = `<script src="${PREFIX}/agent.js"></script>`;
 
-  const authorize = (req: http.IncomingMessage): { session: string } | { status: number } => {
+  const authorize = (req: http.IncomingMessage): { session: string; gated: boolean } | { status: number } => {
     const session = sessionOf(req.headers.host);
     if (session === null) return { status: 421 };
     if (!crossSiteAllowed(req)) return { status: 403 };
+    const c = readCookie(req.headers.cookie, gateCookie);
+    const gated = c !== undefined && safeEqual(c, token);
     // Sin cookie solo pasa lo que el navegador marca como lanzado por una página de ESTE origen, que para
     // existir ya tuvo que entrar con la cookie (fetch con credentials:'omit', el manifiesto de la app) (N-11).
-    if (req.headers['sec-fetch-site'] === 'same-origin') return { session };
-    const c = readCookie(req.headers.cookie, gateCookie);
-    if (c === undefined || !safeEqual(c, token)) return { status: 403 };
-    return { session };
+    // Esa cabecera la puede falsificar un proceso local: por eso lo que el proxy guarda (el bote de una API de
+    // fuera) solo se usa con la cookie de entrada (A-2).
+    if (req.headers['sec-fetch-site'] === 'same-origin') return { session, gated };
+    if (!gated) return { status: 403 };
+    return { session, gated };
   };
 
   const deny = (res: http.ServerResponse, status: number): void => {
@@ -489,23 +530,33 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     res.end();
   };
 
-  const forward = (req: http.IncomingMessage, res: http.ServerResponse, dest: URL, path: string, ctx: Ctx, mayInject: boolean, apiPrefix?: string, jar?: Map<string, string>, own?: { session: string; index: number }, session?: string): void => {
+  const forward = (req: http.IncomingMessage, res: http.ServerResponse, dest: URL, path: string, ctx: Ctx, mayInject: boolean, apiPrefix?: string, jar?: Map<string, string>, own?: { session: string; index: number; gated: boolean }, isAppDoc?: boolean): void => {
     const html = mayInject && wantsHtml(req);
     const headers = rewriteRequestHeaders(req.headers, ctx, html);
     headers.host = dest.host; // la API ve su propio Host y, como Origin, el de la app
-    const ownJar = own ? (apiJars.get(`${own.session}|${own.index}`) ?? new Map<string, string>()) : undefined;
-    if (own && ownJar) {
-      apiJars.set(`${own.session}|${own.index}`, ownJar);
+    // A una API (otro origen) el navegador solo le diría de qué web viene la llamada, no la página entera (A-6).
+    if (apiPrefix !== undefined && headers.referer !== undefined) headers.referer = target.origin + '/';
+    // El bote solo existe para quien entró con la cookie de entrada (A-2).
+    const key = own ? `${own.session}|${own.index}` : '';
+    const ownJar = own?.gated ? (apiJars.get(key) ?? new Map<string, { v: string; exp: number }>()) : undefined;
+    if (own) {
       // A otro servidor no va la sesión de la app: solo su propio bote y lo que la app puso con un Domain que lo cubre.
       const send = new Map<string, string>();
-      const withDomain = domainCookies.get(own.session);
-      for (const pair of (stripGateCookies(req.headers.cookie) ?? '').split(';')) {
-        const i = pair.indexOf('=');
-        const name = i > 0 ? pair.slice(0, i).trim() : '';
-        const d = withDomain?.get(name);
-        if (d !== undefined && domainCovers(d, dest.hostname)) send.set(name, pair.slice(i + 1).trim());
+      if (ownJar) {
+        apiJars.set(key, ownJar);
+        const marks = readDomainMarks(req.headers.cookie);
+        for (const pair of (stripGateCookies(req.headers.cookie) ?? '').split(';')) {
+          const i = pair.indexOf('=');
+          const name = i > 0 ? pair.slice(0, i).trim() : '';
+          const d = marks.get(name);
+          if (d !== undefined && domainCovers(d, dest.hostname)) send.set(name, pair.slice(i + 1).trim());
+        }
+        const t = now();
+        for (const [k, c] of ownJar) {
+          if (c.exp <= t) ownJar.delete(k);
+          else send.set(k, c.v);
+        }
       }
-      for (const [k, v] of ownJar) send.set(k, v);
       if (send.size) headers.cookie = [...send].map(([k, v]) => `${k}=${v}`).join('; ');
       else delete headers.cookie;
     }
@@ -543,26 +594,38 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           }
         }
         if (jar) for (const c of ur.headers['set-cookie'] ?? []) if (expiresCookie(c)) jar.delete(c.split('=')[0].trim());
-        if (ownJar) {
+        if (own) {
           // Lo que esa API pone se guarda aquí y no llega a la celda: no se mezcla con las cookies de la app.
-          for (const c of ur.headers['set-cookie'] ?? []) {
+          for (const c of ownJar ? (ur.headers['set-cookie'] ?? []) : []) {
             const first = c.split(';')[0];
             const i = first.indexOf('=');
             if (i <= 0 || /[\r\n]/.test(first)) continue;
             const name = first.slice(0, i).trim();
-            if (expiresCookie(c)) ownJar.delete(name);
-            else if (ownJar.size < 50 || ownJar.has(name)) ownJar.set(name, first.slice(i + 1).trim());
+            if (expiresCookie(c)) {
+              ownJar?.delete(name);
+              continue;
+            }
+            const age = /;\s*max-age=(\d+)/i.exec(c);
+            const date = /;\s*expires=([^;]+)/i.exec(c);
+            const exp = age ? now() + Number(age[1]) * 1000 : date && Number.isFinite(Date.parse(date[1])) ? Date.parse(date[1]) : Infinity;
+            if (ownJar && (ownJar.size < 50 || ownJar.has(name))) ownJar.set(name, { v: first.slice(i + 1).trim(), exp });
           }
           delete outHeaders['set-cookie'];
-        } else if (apiPrefix === undefined && session !== undefined) {
-          const dom = domainCookies.get(session) ?? new Map<string, string>();
-          for (const c of ur.headers['set-cookie'] ?? []) {
-            const name = c.split('=')[0].trim();
-            const d = cookieDomain(c);
-            if (d === undefined || expiresCookie(c)) dom.delete(name);
-            else if (dom.size < 50 || dom.has(name)) dom.set(name, d);
-          }
-          domainCookies.set(session, dom);
+        } else if (isAppDoc && fixCookies) {
+          // Cada cookie de la app que lleva Domain deja una marca en el navegador: así, al reabrir el mosaico, se
+          // sigue sabiendo cuáles puede recibir una API de ese dominio (A-5). Y una que se vuelve a poner sin Domain la borra.
+          // Solo se borra una marca que el navegador tiene: si no, cada cookie normal llevaría una de propina.
+          const has = readDomainMarks(req.headers.cookie);
+          const marks = (ur.headers['set-cookie'] ?? [])
+            .map(domainMark)
+            .filter((x): x is string => x !== undefined && (!x.includes('Max-Age=0') || has.has(x.slice(DOMAIN_MARK.length, x.indexOf('=')))))
+            .slice(0, 50);
+          if (marks.length) outHeaders['set-cookie'] = [...((outHeaders['set-cookie'] as string[] | undefined) ?? []), ...marks];
+        }
+        if (apiPrefix !== undefined) {
+          // Lo que sirve una API no es una página de la app: si es HTML, que no corra con el origen de la celda.
+          outHeaders['content-security-policy'] = 'sandbox';
+          outHeaders['x-content-type-options'] = 'nosniff';
         }
         // Un documento que redirige a otra web: el panel no deja a la celda ir allí y se quedaría en blanco.
         // Se le dice adónde iba (solo el origen: la dirección entera puede llevar un testigo). Las cookies que
@@ -572,12 +635,15 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           if (out !== undefined) {
             ur.resume();
             note(`redirect out of the mosaic: ${path.split('?')[0]} -> ${out}`);
-            const p = page(200, pages.leftTitle, pages.leftBody.replace('{0}', out), false, pages.back);
+            const p = page(200, pages.leftTitle, pages.leftBody.replace('{0}', () => out), false, pages.back);
             const h: http.OutgoingHttpHeaders = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
             if (outHeaders['set-cookie']) h['set-cookie'] = outHeaders['set-cookie'];
             res.writeHead(p.status, h).end(p.html);
             return;
           }
+        }
+        if (apiPrefix === undefined && !html && status >= 300 && status < 400 && typeof ur.headers.location === 'string' && leavesTo(ur.headers.location, ctx, path) !== undefined) {
+          outHeaders.location = ur.headers.location;
         }
         res.writeHead(status, outHeaders);
         // Si el servidor corta a media respuesta, la celda tiene que enterarse (un EventSource debe reconectar). (H-9)
@@ -603,7 +669,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         res.destroy();
         return;
       }
-      const p = page(502, pages.downTitle.replace('{0}', dest.host), pages.downBody, true);
+      const p = page(502, pages.downTitle.replace('{0}', () => dest.host), pages.downBody, true);
       res.writeHead(p.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(p.html);
     });
     req.pipe(up);
@@ -631,7 +697,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       const m = /^\/(\d+)(\/.*)$/.exec(url.slice(PREFIX.length + 4));
       const api = m ? apis[Number(m[1])] : undefined;
       if (!m || !api) return deny(res, 404);
-      return forward(req, res, api.url, m[2], ctx, false, `${PREFIX}/api/${m[1]}`, undefined, api.cookies === 'own' ? { session: auth.session, index: Number(m[1]) } : undefined);
+      return forward(req, res, api.url, m[2], ctx, false, `${PREFIX}/api/${m[1]}`, undefined, api.cookies === 'own' ? { session: auth.session, index: Number(m[1]), gated: auth.gated } : undefined);
     }
     if (url.startsWith(PREFIX + '/')) return deny(res, 404);
     // Lo que la sesión manda se recuerda por nombre, para la captura. Una petición sin cookies no borra nada
@@ -642,7 +708,7 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
     }
     seenCookies.set(auth.session, jar);
-    forward(req, res, target, url, ctx, true, undefined, jar, undefined, auth.session);
+    forward(req, res, target, url, ctx, true, undefined, jar, undefined, true);
   };
 
   const server = http.createServer((req, res) => {
@@ -720,7 +786,9 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         address: addr.address,
         token,
         tag,
-        gateCookie,
+        get gateCookie() {
+          return gateCookie;
+        },
         originFor,
         entryUrl: (session, path) => `${originFor(session)}${PREFIX}/enter?t=${token}&to=${encodeURIComponent(safeLocalPath(path))}`,
         captureUrl: (session, path) => {
@@ -731,6 +799,8 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
         },
         setPublicPort: (p) => {
           publicPort = Number.isInteger(p) && p > 0 && p < 65536 && p !== port ? p : 0;
+          // Dos proxies en máquinas distintas pueden tener el mismo puerto interno; el que ve el navegador, no (A-7).
+          gateCookie = GATE_PREFIX + shownPort();
         },
         shownPort,
         setPanelOrigin: (o) => {

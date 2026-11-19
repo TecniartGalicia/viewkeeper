@@ -68,17 +68,17 @@ export function isLoopback(origin: string): boolean {
 export function isDevHost(origin: string): boolean {
   let h: string;
   try {
-    h = new URL(origin).hostname.toLowerCase();
+    h = new URL(origin).hostname.toLowerCase().replace(/\.$/, '');
   } catch {
     return false;
   }
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
-  if (h.startsWith('[')) return h === '[::1]' || /^\[(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/.test(h);
+  if (h.startsWith('[')) return h === '[::1]' || h === '[::]' || /^\[(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/.test(h) || /^\[::ffff:(7f|a|c0a8|ac1[0-9a-f]|a9fe)[0-9a-f]{0,2}:/.test(h);
   const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
   if (ip) {
     const a = Number(ip[1]);
     const b = Number(ip[2]);
-    return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+    return a === 0 || a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
   }
   if (!h.includes('.')) return true; // «mipc», «intranet»: un nombre de la red local
   return /\.(local|test|internal|lan|home\.arpa|example|invalid)$/.test(h);

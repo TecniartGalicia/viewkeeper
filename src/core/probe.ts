@@ -73,6 +73,11 @@ function ask(u: URL, timeoutMs: number): Promise<{ status: number; location: str
         resolve({ status: res.statusCode ?? 0, location: typeof loc === 'string' ? loc : undefined });
       },
     );
+    const total = setTimeout(() => {
+      req.destroy();
+      resolve(undefined);
+    }, timeoutMs * 2);
+    req.on('close', () => clearTimeout(total));
     req.on('timeout', () => {
       req.destroy();
       resolve(undefined);
@@ -142,6 +147,12 @@ export function apiTrustsApp(apiOrigin: string, appOrigin: string, timeoutMs = 1
         resolve(corsAllows(res.headers['access-control-allow-origin'], appOrigin, local));
       },
     );
+    // El plazo de node es de inactividad: un servidor que gotea bytes lo esquivaría. Este es total (A-12).
+    const total = setTimeout(() => {
+      req.destroy();
+      resolve(false);
+    }, timeoutMs * 2);
+    req.on('close', () => clearTimeout(total));
     req.on('timeout', () => {
       req.destroy();
       resolve(false);

