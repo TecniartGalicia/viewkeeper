@@ -81,5 +81,7 @@
   "Route for this row": "Ruta de esta fila",
   "Pick a route or type one (/pricing)": "Elige una ruta o escribe una (/precios)",
   "Go to this route": "Ir a esta ruta",
-  "Reopen {0}": "Reabrir {0}"
+  "Reopen {0}": "Reabrir {0}",
+  "Outside the mosaic, not opened": "Fuera del mosaico, no se ha abierto",
+  "It is on another server: those calls will go out from this computer with the origin of your app, with the cookies that server sets and the ones your app set for its domain.": "Está en otro servidor: esas llamadas saldrán de este ordenador con el origen de tu app, con las cookies que ponga ese servidor y las que tu app haya puesto para su dominio."
 }

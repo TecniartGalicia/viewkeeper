@@ -110,6 +110,15 @@ export function probePort(port: number, timeoutMs = 700): Promise<Probe | undefi
 }
 
 /**
+ * ¿La respuesta CORS de la API nombra a la app? En esta máquina vale también «*». Fuera, tiene que nombrarla
+ * tal cual: una API que admite a cualquiera ya funciona sin el proxy, y «*» no distingue a esta app de otra.
+ */
+export function corsAllows(allowOrigin: string | string[] | undefined, appOrigin: string, local: boolean): boolean {
+  const allow = String(Array.isArray(allowOrigin) ? allowOrigin[0] : (allowOrigin ?? '')).trim();
+  return allow === appOrigin || (local && allow === '*');
+}
+
+/**
  * ¿Esta API ya se fía del origen de la app? Se le pregunta desde aquí, con el Origin de la app, y se mira su
  * respuesta CORS. Es lo que impide que una página fabrique un aviso para que el proxy le abra un servicio
  * local cualquiera (el puerto de depuración de un navegador, un Docker): esos no contestan con ese permiso. (N-6)
@@ -122,13 +131,15 @@ export function apiTrustsApp(apiOrigin: string, appOrigin: string, timeoutMs = 1
     } catch {
       return resolve(false);
     }
-    if (u.protocol !== 'http:' || !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname)) return resolve(false);
-    const req = http.request(
-      { host: u.hostname.replace(/^\[|\]$/g, ''), port: u.port || 80, path: '/', method: 'OPTIONS', timeout: timeoutMs, headers: { origin: appOrigin, 'access-control-request-method': 'GET' } },
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
+    // De esta máquina, por http (como hasta ahora). De fuera, solo https.
+    if (!(local ? u.protocol === 'http:' : u.protocol === 'https:') || u.username !== '' || u.password !== '') return resolve(false);
+    const secure = u.protocol === 'https:';
+    const req = (secure ? https : http).request(
+      { protocol: u.protocol, host: u.hostname.replace(/^\[|\]$/g, ''), port: u.port || (secure ? 443 : 80), path: '/', method: 'OPTIONS', timeout: local ? timeoutMs : Math.max(timeoutMs, 4000), headers: { origin: appOrigin, 'access-control-request-method': 'GET' } },
       (res) => {
         res.resume();
-        const allow = String(res.headers['access-control-allow-origin'] ?? '');
-        resolve(allow === appOrigin || allow === '*');
+        resolve(corsAllows(res.headers['access-control-allow-origin'], appOrigin, local));
       },
     );
     req.on('timeout', () => {

@@ -107,7 +107,9 @@ test('P-04 se quitan las cabeceras que prohíben incrustar y se inyecta el agent
   assert.match(r.body, /PAGINA-A/);
   // El agente sale con el origen del panel incrustado: es lo único con lo que hablará.
   const a = await get(`${PREFIX}/agent.js`);
-  assert.equal(a.body, `var __VK_PANEL="vscode-webview://panel-de-prueba",__VK_APIS=[];\n${AGENT}`);
+  // …y con los orígenes que son la propia app (plan de mejoras, M3), para no salir de la celda por un enlace con el dominio completo.
+  const puerto = new URL(up.origin).port;
+  assert.equal(a.body, `var __VK_PANEL="vscode-webview://panel-de-prueba",__VK_APIS=[],__VK_TARGETS=${JSON.stringify([up.origin, ...['localhost', '127.0.0.1', '[::1]'].map((h) => `http://${h}:${puerto}`).filter((o) => o !== up.origin)])};\n${AGENT}`);
   assert.equal(a.headers['cache-control'], 'no-store');
 });
 
@@ -391,14 +393,15 @@ test('P-18 flujos: si la celda cierra se suelta el servidor, y si el servidor co
 
 test('P-19 API en otro puerto: pasa por el proxy con el origen de la app, y solo si está en la lista y es local', async () => {
   const apiUp = await startUpstream();
-  const p = await startProxy({ target: up.origin, agentSource: AGENT, apiOrigins: [apiUp.origin, 'https://api.example.com'] });
+  // De fuera de esta máquina solo se admite https (plan de mejoras, M4): por http se descarta al arrancar.
+  const p = await startProxy({ target: up.origin, agentSource: AGENT, apiOrigins: [apiUp.origin, 'http://api.example.com'] });
   try {
     const o = `http://${hostOf(p)}`;
     const w = json<{ host: string; origin: string; cookie: string }>(await get(`${PREFIX}/api/0/whoami`, { proxy: p, cookie: `${p.gateCookie}=${p.token}; sid=1`, headers: { ...api, origin: o } }));
     assert.equal('http://' + w.host, apiUp.origin, 'la API ve su propio Host');
     assert.equal(w.origin, up.origin, 'y como origen, el de la app: su lista de CORS lo reconoce');
     assert.equal(w.cookie, 'sid=1');
-    assert.equal((await get(`${PREFIX}/api/1/x`, { proxy: p, headers: api })).status, 404, 'un origen que no es de esta máquina se descarta al arrancar');
+    assert.equal((await get(`${PREFIX}/api/1/x`, { proxy: p, headers: api })).status, 404, 'un origen de fuera de esta máquina y sin https se descarta al arrancar');
     assert.equal((await get(`${PREFIX}/api/0/whoami`, { proxy: p, cookie: false, headers: api })).status, 403);
     assert.match((await get(`${PREFIX}/agent.js`, { proxy: p })).body, new RegExp(`__VK_APIS=\\["${apiUp.origin}"\\]`));
     const reservado = await get(`${PREFIX}/otra-cosa`, { proxy: p });

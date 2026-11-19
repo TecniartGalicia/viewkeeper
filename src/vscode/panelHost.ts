@@ -76,6 +76,7 @@ function texts(): PanelText {
     zoom: t('Enlarge this cell (Esc to go back)'),
     follow: t('Follow editor'),
     errors: t('JavaScript errors on this page'),
+    left: t('Outside the mosaic, not opened'),
   };
 }
 
@@ -179,6 +180,13 @@ export class PanelHost implements vscode.Disposable {
       opts.onHint?.(m.origin);
     } else if (m.t === 'miss' && typeof m.cell === 'string') {
       this.misses.set(m.cell, (this.misses.get(m.cell) ?? 0) + 1);
+    } else if (m.t === 'left' && typeof m.cell === 'string' && typeof m.origin === 'string') {
+      // Solo el origen, y solo si lo es: el texto viene de la página.
+      try {
+        opts.log?.(`cell ${m.cell}: the page tried to go to ${new URL(m.origin).origin}, outside the mosaic; not followed`);
+      } catch {
+        /* no era un origen */
+      }
     } else if (m.t === 'trip') {
       opts.log?.(`row ${m.group}: cells kept navigating each other, navigation sync paused`);
     } else if (m.t === 'fromCell' && m.cell && m.ev && this.sonda) {

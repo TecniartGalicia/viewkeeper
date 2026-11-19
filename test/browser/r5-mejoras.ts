@@ -38,7 +38,7 @@ const PAGINA_ABS = (): string =>
   pagina(
     'abs',
     `<a id="abs" href="${appOrigin}/ok?desde=enlace" style="position:absolute;left:10px;top:10px;display:block;width:200px;height:40px;background:#ddd">enlace con el dominio completo</a>
-  <form id="f" action="${appOrigin}/ok" style="position:absolute;left:10px;top:70px"><input name="desde" value="formulario"><button id="env" style="width:120px;height:30px">enviar</button></form>
+  <form id="f" action="${appOrigin}/ok"><input type="hidden" name="desde" value="formulario"><button id="env" style="position:absolute;left:10px;top:70px;width:200px;height:40px">enviar</button></form>
   <button id="js" style="position:absolute;left:10px;top:130px;width:200px;height:40px" onclick="location.href='${appOrigin}/ok?desde=js'">location.href</button>
   <button id="ext" style="position:absolute;left:10px;top:190px;width:200px;height:40px" onclick="location.href='http://otra-web.example/x'">fuera</button>
   <script>fetch('${appOrigin}/dato').then(function (r) { return r.text(); }).then(function (t) { log('fetch-abs:' + t); }, function (e) { log('fetch-abs:ERROR ' + e.message); });</script>`,
@@ -197,6 +197,47 @@ try {
     await hasta(() => alHost('matriz', h0).some((m) => m.t === 'pick'), 3000);
     const pide = alHost('matriz', h0).find((m) => m.t === 'pick');
     caso('M9-1', 'en una matriz las filas no tienen su propio «+», o no dice a qué fila añadir', mas.n !== 2 || !mas.ultimos || pide?.group !== 1 || pide?.cell !== undefined, `botones «+»: ${mas.n} (¿el último de cada fila? ${mas.ultimos}); mensaje al host: ${j(pide)}`);
+  }
+
+  // ══════════ M3 · la app nombrada con su dominio completo no saca a la celda del mosaico
+  {
+    let d = registro.length;
+    const s = await pestana(`${panel.origin}/?e=abs`);
+    await cargadas('/abs', d, 3);
+    await hasta(() => registro.slice(d).filter((r) => r.ev.startsWith('fetch-abs:')).length >= 3, 5000);
+    const fetchs = registro.slice(d).filter((r) => r.ev.startsWith('fetch-abs:')).map((r) => r.ev.slice(10));
+    caso('M3-2', 'un fetch a la propia app escrito con el dominio completo falla dentro de la celda (CORS)', fetchs.length !== 3 || fetchs.some((t) => t !== 'dato-de-la-app'), `respuestas del fetch por celda: ${j(fetchs)}`);
+    const volver = async (): Promise<void> => {
+      const d0 = registro.length;
+      await evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '/abs' }, location.origin)`);
+      await cargadas('/abs', d0, 3);
+      await espera(400);
+    };
+    const prueba = async (id: string, titulo: string, y: number): Promise<void> => {
+      d = registro.length;
+      await clic(s, 0, 60, y);
+      const llegan = await cargadas('/ok', d, 3, 6000);
+      const en = await evalua<string[]>(s, `[...document.querySelectorAll('.ruta')].map(function (x) { return x.textContent; })`);
+      caso(id, titulo, !llegan, `cargas de /ok tras el clic en el móvil: ${j(veces('cargada:/ok', d))}; rutas en los rótulos: ${j(en)}`);
+      await volver();
+    };
+    await espera(400);
+    await prueba('M3-1', 'un enlace escrito con el dominio completo deja las celdas en blanco en vez de abrir la página', 30);
+    await prueba('M3-3', 'un formulario cuyo destino lleva el dominio completo deja las celdas en blanco', 90);
+    await prueba('M3-4', 'una navegación por código (location.href) al dominio completo deja las celdas en blanco', 150);
+
+    // A otra web: no se va (se quedaría en blanco), se dice en el rótulo y la celda sigue viva.
+    d = registro.length;
+    const h0 = haciaHost.length;
+    await clic(s, 0, 60, 210);
+    await hasta(() => alHost('abs', h0).filter((m) => m.t === 'left').length >= 1, 4000);
+    await espera(600);
+    const avisos = await evalua<string[]>(s, `[...document.querySelectorAll('.fuera')].map(function (x) { return x.textContent; })`);
+    const alhost = alHost('abs', h0).filter((m) => m.t === 'left');
+    const recargas = veces(/^cargada:/, d);
+    await clic(s, 0, 60, 30);
+    const viva = await cargadas('/ok', d, 3, 6000);
+    caso('M3-5', 'un salto por código a otra web deja la celda en blanco, o no se explica', avisos.length < 1 || !avisos[0].includes('otra-web.example') || alhost[0]?.origin !== 'http://otra-web.example' || Object.keys(recargas).length > 0 || !viva, `avisos en los rótulos: ${j(avisos)}; al host: ${j(alhost)}; recargas: ${j(recargas)}; ¿la celda sigue viva (el enlace siguiente funciona)? ${viva}`);
   }
 
   // ══════════ M1 · una web publicada se anuncia en la barra

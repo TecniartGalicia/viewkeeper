@@ -47,6 +47,7 @@ export interface PanelText {
   zoom: string;
   follow: string;
   errors: string;
+  left: string;
 }
 export interface PanelState {
   name: string;
@@ -439,6 +440,24 @@ window.addEventListener('message', (ev: MessageEvent) => {
       // Al host, solo el número: el mensaje de un error puede llevar datos de la página.
       vscode.postMessage({ t: 'errors', cell: id, n: l.errorCount });
       if (state?.sonda) vscode.postMessage({ t: 'fromCell', cell: id, ev: m });
+      return;
+    }
+    if (m.t === 'left') {
+      // La página quiso irse a otra web: no cabe en la celda (se quedaría en blanco). Se dice un momento en su rótulo.
+      if (typeof m.origin !== 'string' || !state) return;
+      let host = '';
+      try {
+        host = new URL(m.origin).host;
+      } catch {
+        return;
+      }
+      l.fig.querySelector('.fuera')?.remove();
+      const p = document.createElement('p');
+      p.className = 'fuera';
+      p.textContent = `${state.text.left}: ${host}`;
+      l.fig.querySelector('figcaption')?.after(p);
+      setTimeout(() => p.remove(), 6000);
+      vscode.postMessage({ t: 'left', cell: id, origin: m.origin.slice(0, 80) });
       return;
     }
     if (m.t === 'hello' || m.t === 'ready' || m.t === 'nav') {

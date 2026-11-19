@@ -182,7 +182,8 @@ async function show(ctx: vscode.ExtensionContext, mosaic: Mosaic, fresh = true):
   if (current) current.dispose();
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   // La lista puede venir escrita en los ajustes del repositorio: cada origen se comprueba antes de usarlo (N-6).
-  const declared = (cfg.get<string[]>('apiOrigins') ?? []).filter((o) => typeof o === 'string' && isLoopback(o)).slice(0, 8);
+  // De esta máquina o, por https, de fuera. El proxy vuelve a filtrarla (parseApis); aquí se comprueba CORS.
+  const declared = (cfg.get<string[]>('apiOrigins') ?? []).filter((o) => typeof o === 'string' && (isLoopback(o) || /^https:\/\//i.test(o))).slice(0, 8);
   const trusted = (await Promise.all(declared.map(async (o) => ((await apiTrustsApp(o, next.target)) ? o : undefined)))).filter((o): o is string => o !== undefined);
   for (const o of declared) if (!trusted.includes(o)) out.warn(`apiOrigins: ${o} does not allow ${next.target} by CORS; not routed through the proxy`);
   current = await PanelHost.open(ctx, next, {
@@ -221,7 +222,9 @@ async function offerApi(ctx: vscode.ExtensionContext, raw: string): Promise<void
   } catch {
     return;
   }
-  if (offered.has(origin) || !isLoopback(origin) || !current) return;
+  // Cada origen se mira una vez, y como mucho doce por sesión: el aviso viene de la página.
+  if (offered.has(origin) || offered.size >= 12 || !current) return;
+  if (!isLoopback(origin) && !origin.startsWith('https://')) return;
   offered.add(origin);
   // El aviso viene de la página, y una página puede fabricarlo: solo se ofrece si la API ya se fía de esta app.
   if (!(await apiTrustsApp(origin, current.mosaic().target))) {
@@ -230,7 +233,10 @@ async function offerApi(ctx: vscode.ExtensionContext, raw: string): Promise<void
   }
   const yes = t('Yes');
   const where = folder() ? t('this workspace') : t('your user settings');
-  const pick = await vscode.window.showInformationMessage(t('Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper? It will be saved in "viewkeeper.apiOrigins" of {1}.', origin, where), yes, t('No'));
+  const ask = t('Your app calls {0} and the browser is blocking it inside the mosaic. Route it through ViewKeeper? It will be saved in "viewkeeper.apiOrigins" of {1}.', origin, where);
+  // De fuera de esta máquina: se dice qué viaja.
+  const far = isLoopback(origin) ? '' : ' ' + t('It is on another server: those calls will go out from this computer with the origin of your app, with the cookies that server sets and the ones your app set for its domain.');
+  const pick = await vscode.window.showInformationMessage(ask + far, yes, t('No'));
   if (pick !== yes || !current) return;
   const cfg = vscode.workspace.getConfiguration('viewkeeper');
   const list = [...new Set([...(cfg.get<string[]>('apiOrigins') ?? []), origin])];

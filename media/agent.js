@@ -6,6 +6,16 @@
   'use strict';
   var PANEL = typeof __VK_PANEL === 'string' ? __VK_PANEL : '';
   var APIS = typeof __VK_APIS === 'object' && __VK_APIS ? __VK_APIS : [];
+  // Los orígenes de la propia app (su dominio con y sin «www», por http y https). Dentro de la celda la app
+  // vive en el origen del proxy: lo que la nombre con su dominio completo se convierte en una ruta local.
+  var TARGETS = typeof __VK_TARGETS === 'object' && __VK_TARGETS ? __VK_TARGETS : [];
+  function localPath(u) {
+    try {
+      var url = new URL(String(u), location.href);
+      if (url.origin === location.origin || TARGETS.indexOf(url.origin) < 0) return null;
+      return url.pathname + url.search + url.hash;
+    } catch (e) { return null; }
+  }
   var name = String(window.name || '');
   // Una celda: incrustada, con panel conocido y con el nombre que pone el panel.
   var inCell = window.top !== window && !!PANEL && name.indexOf('vk:') === 0;
@@ -14,16 +24,22 @@
   // ── API en otro puerto: la página la llama por el proxy, que la reenvía con el origen de la app.
   // Se instala también fuera de una celda (la captura abre la página en primer nivel) (N-5).
   function viaProxy(u) {
+    // La propia app llamada con su dominio completo: es una petición local, no una API aparte.
+    var own = localPath(u);
+    if (own !== null) return own;
     try {
       var url = new URL(String(u), location.href);
       var i = APIS.indexOf(url.origin);
       return i < 0 ? null : '/__viewkeeper/api/' + i + url.pathname + url.search;
     } catch (e) { return null; }
   }
+  // Una llamada a otro origen que falla suele ser CORS: la API admite el origen de la app y no el de la celda.
+  // De esta máquina, por http o https; de fuera, solo https (lo único que el proxy acepta reenviar).
   function isLocalOther(u) {
     try {
       var url = new URL(String(u), location.href);
-      return url.origin !== location.origin && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
+      if (url.origin === location.origin) return false;
+      return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname) ? /^https?:$/.test(url.protocol) : url.protocol === 'https:';
     } catch (e) { return false; }
   }
   if ((APIS.length || inCell) && !window.__vkApi) {
@@ -80,6 +96,46 @@
   hintFn = function (u) {
     try { var o = new URL(String(u), location.href).origin; if (!hinted[o]) { hinted[o] = true; send({ t: 'hint', kind: 'api', origin: o }); } } catch (e) { /* nada */ }
   };
+
+  // ── la app nombrada con su dominio completo, y las salidas del mosaico.
+  // Un enlace o un formulario que apunta al dominio real sacaría a la celda del proxy (y el panel no deja:
+  // se quedaría en blanco). Justo antes de que actúe se le pone la ruta local, y el clic sigue su curso
+  // normal: el enrutador de una SPA, el menú contextual, todo ve un enlace de la propia página.
+  function attr(el, name) { try { return el.getAttribute(name); } catch (e) { return null; } }
+  function fixLink(ev) {
+    var t = ev.target;
+    var a = t && t.closest ? t.closest('a[href],area[href]') : null;
+    if (!a) return;
+    var p = localPath(attr(a, 'href'));
+    if (p !== null) a.setAttribute('href', p);
+  }
+  ['pointerdown', 'click', 'auxclick', 'keydown'].forEach(function (k) { document.addEventListener(k, fixLink, true); });
+  document.addEventListener('submit', function (ev) {
+    var f = ev.target;
+    var by = ev.submitter;
+    if (by && attr(by, 'formaction')) { var q = localPath(attr(by, 'formaction')); if (q !== null) by.setAttribute('formaction', q); }
+    if (f && attr(f, 'action')) { var p = localPath(attr(f, 'action')); if (p !== null) f.setAttribute('action', p); }
+  }, true);
+  // Lo que navega por código (location.href = …) no pasa por un enlace: se caza con la API de navegación.
+  // A la propia app, se va a la ruta local; a otra web, no se va (la celda quedaría en blanco) y se avisa
+  // al panel con el origen, para que diga qué ha pasado.
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigate', function (ev) {
+      if (!ev.cancelable || ev.hashChange || ev.downloadRequest) return;
+      var dest;
+      try { dest = new URL(ev.destination.url); } catch (e) { return; }
+      if (dest.origin === location.origin || !/^https?:$/.test(dest.protocol)) return;
+      var p = localPath(dest.href);
+      if (p !== null) {
+        if (ev.formData) return; // un formulario con cuerpo: ya se corrigió en «submit»; si no, se deja estar
+        ev.preventDefault();
+        if (ev.navigationType === 'replace') location.replace(p); else location.assign(p);
+        return;
+      }
+      ev.preventDefault();
+      send({ t: 'left', origin: dest.origin });
+    });
+  }
 
   // ── errores de la página: para ver de un vistazo que «en el móvil falla y en el escritorio no».
   // El agente se carga antes que los scripts de la página, así que oye también los de arranque. El texto

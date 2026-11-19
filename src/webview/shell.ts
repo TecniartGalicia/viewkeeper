@@ -52,6 +52,7 @@ export const PANEL_CSS = `
   figcaption .err[hidden] { display: none; }
   .errs { margin: 0 0 6px; padding: 6px 8px 6px 22px; max-height: 120px; overflow: auto; border-radius: 4px; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; background: var(--vscode-inputValidation-errorBackground, #5a1d1d); border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100); }
   .errs li { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .fuera { margin: 0 0 6px; padding: 4px 8px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); }
   figcaption .ses { font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
   .escena { overflow: hidden; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: #fff; }
   iframe { border: 0; transform-origin: 0 0; display: block; background: #fff; }

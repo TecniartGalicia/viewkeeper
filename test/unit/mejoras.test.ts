@@ -323,3 +323,109 @@ test('P-65 ¿hay alguien en ese origen? cualquier respuesta cuenta; un puerto va
   assert.equal(await answers('ftp://localhost'), false);
   assert.equal(await answers('no es una url'), false);
 });
+
+// ───────────────────────── Fase C
+
+test('P-66 el agente nace sabiendo qué orígenes son la propia app, y la lista de API descarta lo que no debe pasar', async () => {
+  const { parseApis, cookieDomain, domainCovers } = await import('../../src/core/proxy.ts');
+  const app = await fake((_req, res) => html(res, 'app'));
+  const px = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: ['https://api.ejemplo.org', 'http://api.ejemplo.org', 'http://localhost:3001', 'https://usuario:clave@api2.ejemplo.org', 'ftp://x', 'no es una url', 'https://api.ejemplo.org/otra/vez'] });
+  try {
+    const a = await cell(px, '/__viewkeeper/agent.js', { doc: false });
+    assert.equal(a.status, 200);
+    // La primera línea del agente servido son sus variables; «[::1]» lleva corchetes, así que se corta por el final.
+    const targets = JSON.parse(/__VK_TARGETS=(\[.*?\]);\n/.exec(a.body)?.[1] ?? '[]') as string[];
+    assert.deepEqual(targets.sort(), [`http://127.0.0.1:${app.port}`, `http://[::1]:${app.port}`, `http://localhost:${app.port}`]);
+    // De fuera solo https; de esta máquina también http; sin credenciales en la dirección; sin repetidos.
+    assert.deepEqual(JSON.parse(/__VK_APIS=(\[.*?\]),__VK_TARGETS=/.exec(a.body)?.[1] ?? '[]'), ['https://api.ejemplo.org', 'http://localhost:3001']);
+  } finally {
+    await px.close();
+    await app.close();
+  }
+  const modos = (l: Parameters<typeof parseApis>[0]): string[] => parseApis(l).map((x) => `${x.url.origin} ${x.cookies}`);
+  assert.deepEqual(modos(['http://localhost:3001', 'https://api.ejemplo.org']), ['http://localhost:3001 app', 'https://api.ejemplo.org own']);
+  // A un servidor de fuera nunca se le pueden mandar las cookies de la celda, se pida lo que se pida.
+  assert.deepEqual(modos([{ origin: 'https://api.ejemplo.org', cookies: 'app' }]), ['https://api.ejemplo.org own']);
+  assert.deepEqual(modos([{ origin: 'http://127.0.0.1:9', cookies: 'own' }]), ['http://127.0.0.1:9 own']);
+  assert.equal(cookieDomain('sid=1; Path=/; Domain=.Ejemplo.org; Secure'), 'ejemplo.org');
+  assert.equal(cookieDomain('sid=1; Path=/'), undefined);
+  assert.equal(domainCovers('ejemplo.org', 'api.ejemplo.org'), true);
+  assert.equal(domainCovers('ejemplo.org', 'ejemplo.org'), true);
+  assert.equal(domainCovers('ejemplo.org', 'malejemplo.org'), false);
+  assert.equal(domainCovers('api.ejemplo.org', 'ejemplo.org'), false);
+});
+
+test('P-67 una API de otro servidor: no recibe la sesión de la app, y lo que ella pone no llega a la celda', async () => {
+  // «localhost» y «127.0.0.1» hacen de dos servidores distintos: la app pone una cookie para el dominio «localhost».
+  const api = await fake((req, res) => {
+    const headers: http.OutgoingHttpHeaders = { 'content-type': 'application/json' };
+    if (req.url === '/login') headers['set-cookie'] = ['apisid=A1; Path=/; HttpOnly', 'tema=oscuro; Path=/'];
+    if (req.url === '/logout') headers['set-cookie'] = ['apisid=; Path=/; Max-Age=0'];
+    res.writeHead(200, headers).end(JSON.stringify({ cookie: req.headers.cookie ?? '', origin: req.headers.origin ?? null, host: req.headers.host }));
+  });
+  const app = await fake((req, res) => {
+    if (req.url === '/entrar') return html(res, 'dentro', { 'set-cookie': ['sesion=SECRETA; Path=/; HttpOnly', 'sso=COMPARTIDA; Path=/; Domain=localhost', 'otra=X; Path=/; Domain=ejemplo.org'] });
+    if (req.url === '/salir') return html(res, 'fuera', { 'set-cookie': ['sso=; Path=/; Domain=localhost; Max-Age=0'] });
+    html(res, 'app');
+  });
+  const apiLocalhost = `http://localhost:${api.port}`;
+  const apiOtroNombre = `http://127.0.0.1:${api.port}`;
+  // Índices: 0 = cubierta por el Domain de la app, 1 = otro servidor, 2 = como hasta ahora (otro puerto de esta máquina).
+  const px = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: [{ origin: apiLocalhost, cookies: 'own' }, { origin: apiOtroNombre, cookies: 'own' }] });
+  const viejo = await startProxy({ target: app.origin, agentSource: '/*A*/', apiOrigins: [apiLocalhost] });
+  const ck = 'sesion=SECRETA; sso=COMPARTIDA; otra=X';
+  const pide = async (p: RunningProxy, n: number, ruta: string, session = 'main', cookie = ck): Promise<{ cookie: string; origin: string | null; set: unknown }> => {
+    const r = await cell(p, `/__viewkeeper/api/${n}${ruta}`, { doc: false, session, cookie, headers: { origin: p.originFor(session) } });
+    assert.equal(r.status, 200, `${ruta}: ${r.body}`);
+    return { ...(JSON.parse(r.body) as { cookie: string; origin: string | null }), set: r.headers['set-cookie'] };
+  };
+  try {
+    // Antes de que la app ponga nada con Domain: a la API no le llega ninguna cookie de la celda.
+    assert.equal((await pide(px, 1, '/datos')).cookie, '');
+    assert.equal((await pide(px, 0, '/datos')).cookie, '');
+    // La app inicia sesión y pone una cookie para todo «localhost».
+    await cell(px, '/entrar');
+    const cubierta = await pide(px, 0, '/datos');
+    assert.equal(cubierta.cookie, 'sso=COMPARTIDA', 'solo la que la app puso con un Domain que cubre a la API');
+    assert.equal(cubierta.origin, app.origin, 'la API ve el origen de la app');
+    assert.equal((await pide(px, 1, '/datos')).cookie, '', 'a otro servidor, ninguna');
+    // La API pone las suyas: no llegan a la celda, y vuelven a esa API (y solo a ella) en la siguiente llamada.
+    const login = await pide(px, 1, '/login');
+    assert.equal(login.set, undefined, 'el Set-Cookie de la API no llega a la celda');
+    assert.equal((await pide(px, 1, '/datos')).cookie, 'apisid=A1; tema=oscuro');
+    assert.equal((await pide(px, 0, '/datos')).cookie, 'sso=COMPARTIDA', 'el bote de una API no se mezcla con el de otra');
+    assert.equal((await pide(px, 1, '/datos', 'admin')).cookie, '', 'ni con el de otra sesión del mosaico');
+    const app2 = await cell(px, '/', { cookie: ck });
+    assert.equal(app2.status, 200);
+    assert.ok(!JSON.stringify(app.seen.at(-1)?.headers).includes('apisid'), 'las cookies de la API no viajan a la app');
+    // La API caduca una: sale del bote.
+    await pide(px, 1, '/logout');
+    assert.equal((await pide(px, 1, '/datos')).cookie, 'tema=oscuro');
+    // La app caduca la suya con Domain: deja de viajar, aunque la celda aún la mande.
+    await cell(px, '/salir');
+    assert.equal((await pide(px, 0, '/datos')).cookie, '');
+    // Sin cambios para lo que ya había: otro puerto de esta máquina recibe las cookies de la celda, como el navegador.
+    assert.equal((await pide(viejo, 0, '/datos')).cookie, ck);
+    assert.match(String((await pide(viejo, 0, '/login')).set), /apisid=A1/);
+  } finally {
+    await px.close();
+    await viejo.close();
+    await app.close();
+    await api.close();
+  }
+});
+
+test('P-68 a quién se le ofrece pasar por el proxy: en esta máquina vale «*»; fuera, la API tiene que nombrar a la app', async () => {
+  const { corsAllows, apiTrustsApp } = await import('../../src/core/probe.ts');
+  assert.equal(corsAllows('http://localhost:3000', 'http://localhost:3000', true), true);
+  assert.equal(corsAllows('*', 'http://localhost:3000', true), true);
+  assert.equal(corsAllows('*', 'https://app.ejemplo.org', false), false);
+  assert.equal(corsAllows('https://app.ejemplo.org', 'https://app.ejemplo.org', false), true);
+  assert.equal(corsAllows(['https://app.ejemplo.org'], 'https://app.ejemplo.org', false), true);
+  assert.equal(corsAllows('https://otra.ejemplo.org', 'https://app.ejemplo.org', false), false);
+  assert.equal(corsAllows(undefined, 'https://app.ejemplo.org', false), false);
+  // De fuera por http, con credenciales en la dirección o ilegible: ni se pregunta.
+  assert.equal(await apiTrustsApp('http://api.ejemplo.org', 'https://app.ejemplo.org', 300), false);
+  assert.equal(await apiTrustsApp('https://u:c@api.ejemplo.org', 'https://app.ejemplo.org', 300), false);
+  assert.equal(await apiTrustsApp('nada', 'https://app.ejemplo.org', 300), false);
+});

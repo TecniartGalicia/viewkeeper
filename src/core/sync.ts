@@ -14,6 +14,7 @@ export type AgentEvent =
   | { t: 'miss'; kind: string }
   | { t: 'hint'; kind: string; origin: string }
   | { t: 'error'; kind: string; msg: string }
+  | { t: 'left'; origin: string }
   | { t: 'answer'; id: number; data: unknown };
 
 /** Lo que el panel manda a un agente. */
