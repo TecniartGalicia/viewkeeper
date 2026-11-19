@@ -75,7 +75,7 @@ La barra del propio panel añade dispositivos y enciende o apaga cada tipo de si
 
 Sin telemetría, sin cuenta y sin ninguna petición de red propia. El proxy solo escucha en `127.0.0.1`, solo sirve a las vistas del panel que lo abrió (un testigo aleatorio de 192 bits en una cookie), rechaza cualquier otro nombre de servidor y no admite peticiones lanzadas desde otras webs. Lo que escribes en una vista se reparte a las demás dentro del panel y nunca llega al host de la extensión. Detalles en [PRIVACY.es.md](PRIVACY.es.md); para avisar de una vulnerabilidad, [SECURITY.md](SECURITY.md).
 
-El proxy y el motor de sincronización pasaron dos auditorías independientes antes de la primera versión, con un banco en navegador de 27 casos de ataque y comportamiento que corre en CI.
+El proxy y el motor de sincronización pasaron dos auditorías independientes antes de la primera versión, con un banco de 64 casos de ataque y comportamiento (proxy, sincronización y el panel real en Chrome sin ventana) que corre en CI.
 
 ## Requisitos
 

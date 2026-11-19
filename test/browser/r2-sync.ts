@@ -238,5 +238,4 @@ console.log('\n──────── nuevo ────────');
   const d = m.emitir('inv', { t: 'nav', url: U(cells[0], '/admin/usuarios/7/borrar?confirmar=1') });
   nota(`(límite conocido) el JavaScript de una celda puede mandar gesture+nav por su cuenta y llevar a las otras sesiones del grupo a cualquier ruta local: ${JSON.stringify(d.map((x) => `${x.to} → ${x.cmd.t === 'nav' ? x.cmd.path : ''}`))}. El cortacircuitos lo limita a ${TRIP_COUNT} cada ${TRIP_MS / 1000} s.`);
 }
-process.exit(0);
-process.exitCode = resultado();
+process.exit(resultado());

@@ -352,5 +352,4 @@ await px.close();
 await up.close();
 await api.close();
 console.log(`\nexcepciones no capturadas en total: ${excepciones.length} ${JSON.stringify(excepciones)}`);
-process.exit(0);
-process.exitCode = resultado();
+process.exit(resultado());

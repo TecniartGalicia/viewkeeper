@@ -75,7 +75,7 @@ The panel's own toolbar adds a device, switches each kind of sync on or off, and
 
 No telemetry, no account, no network request of its own. The proxy listens only on `127.0.0.1`, only serves the views of the panel that opened it (a random 192-bit token in a cookie), rejects any other host name, and refuses requests launched from other websites. What you type in a view is relayed to the other views inside the panel and never reaches the extension host. Details in [PRIVACY.md](PRIVACY.md); reporting a vulnerability in [SECURITY.md](SECURITY.md).
 
-The proxy and the sync engine went through two independent audits before the first release, with a browser bench of 27 attack and behaviour cases that runs in CI.
+The proxy and the sync engine went through two independent audits before the first release, with a bench of 64 attack and behaviour cases (proxy, sync and the real panel in headless Chrome) that runs in CI.
 
 ## Requirements
 
