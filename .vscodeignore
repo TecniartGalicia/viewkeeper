@@ -1,0 +1,15 @@
+**
+!dist/extension.js
+!dist/panel.js
+!media/agent.js
+!media/icon.png
+!l10n/**
+!package.json
+!package.nls.json
+!package.nls.es.json
+!README.md
+!README.es.md
+!CHANGELOG.md
+!PRIVACY.md
+!PRIVACY.es.md
+!LICENSE

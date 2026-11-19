@@ -1,0 +1,262 @@
+{
+  "name": "viewkeeper",
+  "displayName": "ViewKeeper",
+  "description": "See your dev server on several devices and routes at once inside VS Code. Scroll, clicks, typing and navigation stay in sync. Works with Vite, Next.js and any localhost app, hot reload and sign-in included.",
+  "version": "0.1.0",
+  "publisher": "argalla",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Testing",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "responsive",
+    "preview",
+    "mobile",
+    "device",
+    "localhost",
+    "multi device",
+    "sync scroll",
+    "vite",
+    "next.js",
+    "screenshot"
+  ],
+  "pricing": "Free",
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TecniartGalicia/viewkeeper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TecniartGalicia/viewkeeper/issues"
+  },
+  "homepage": "https://github.com/TecniartGalicia/viewkeeper#readme",
+  "qna": "https://github.com/TecniartGalicia/viewkeeper/discussions",
+  "galleryBanner": {
+    "color": "#0F172A",
+    "theme": "dark"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%cap.untrusted%",
+      "restrictedConfigurations": [
+        "viewkeeper.browserPath",
+        "viewkeeper.apiOrigins"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "%cap.virtual%"
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "l10n": "./l10n",
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:agent": "node --check media/agent.js",
+    "lint": "eslint src test media/agent.js",
+    "l10n": "node scripts/l10n-sync.mjs",
+    "test": "node --no-warnings --test \"test/unit/*.test.ts\"",
+    "test:browser": "node --no-warnings test/browser/r1-proxy.ts && node --no-warnings test/browser/r2-sync.ts && node --no-warnings test/browser/r4-navegador.ts",
+    "test:integration": "npm run build && node esbuild.mjs --tests && node --no-warnings test/integration/run.ts",
+    "package": "vsce package --no-dependencies",
+    "check": "npm run typecheck && npm run check:agent && npm run lint && npm run l10n && npm test"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "viewkeeper.open",
+        "title": "%cmd.open%",
+        "category": "ViewKeeper",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "viewkeeper.openMatrix",
+        "title": "%cmd.openMatrix%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.addSession",
+        "title": "%cmd.addSession%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.save",
+        "title": "%cmd.save%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.openSaved",
+        "title": "%cmd.openSaved%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.reload",
+        "title": "%cmd.reload%",
+        "category": "ViewKeeper",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "viewkeeper.capture",
+        "title": "%cmd.capture%",
+        "category": "ViewKeeper",
+        "icon": "$(device-camera)"
+      },
+      {
+        "command": "viewkeeper.captureFullPage",
+        "title": "%cmd.captureFullPage%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.doctor",
+        "title": "%cmd.doctor%",
+        "category": "ViewKeeper"
+      },
+      {
+        "command": "viewkeeper.licenseStatus",
+        "title": "%cmd.licenseStatus%",
+        "category": "ViewKeeper"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "viewkeeper.reload",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "viewkeeper.capture",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "viewkeeper.reload",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+        },
+        {
+          "command": "viewkeeper.addSession",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+        },
+        {
+          "command": "viewkeeper.save",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+        },
+        {
+          "command": "viewkeeper.capture",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+        },
+        {
+          "command": "viewkeeper.captureFullPage",
+          "when": "activeWebviewPanelId == 'viewkeeper.mosaic'"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ViewKeeper",
+      "properties": {
+        "viewkeeper.defaultDevices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "iphone-15",
+            "ipad-mini",
+            "laptop"
+          ],
+          "markdownDescription": "%cfg.defaultDevices%"
+        },
+        "viewkeeper.customDevices": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 7680
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 7680
+              },
+              "mobile": {
+                "type": "boolean"
+              }
+            }
+          },
+          "markdownDescription": "%cfg.customDevices%"
+        },
+        "viewkeeper.apiOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://(localhost|127.0.0.1|[::1])(:d+)?$"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%cfg.apiOrigins%"
+        },
+        "viewkeeper.relaxCsp": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%cfg.relaxCsp%"
+        },
+        "viewkeeper.fixCookies": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%cfg.fixCookies%"
+        },
+        "viewkeeper.browserPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "%cfg.browserPath%"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "1.95.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.30.0",
+    "@typescript-eslint/parser": "^8.30.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
+    "globals": "^16.0.0",
+    "ovsx": "^1.1.1",
+    "typescript": "^5.8.0",
+    "ws": "^8.18.0"
+  }
+}

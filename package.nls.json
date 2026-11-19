@@ -1,0 +1,19 @@
+{
+  "cmd.open": "Open mosaic for your dev server",
+  "cmd.openMatrix": "Open route × device matrix",
+  "cmd.addSession": "Add a cell with another session",
+  "cmd.save": "Save this mosaic to the project",
+  "cmd.openSaved": "Open a saved mosaic",
+  "cmd.reload": "Reload all cells",
+  "cmd.capture": "Capture the mosaic",
+  "cmd.captureFullPage": "Capture the mosaic (full pages)",
+  "cmd.doctor": "Diagnose",
+  "cfg.defaultDevices": "Devices shown when a mosaic is opened for the first time. Ids from the built-in catalogue or from `viewkeeper.customDevices`.",
+  "cfg.customDevices": "Your own devices: `{ \"name\", \"width\", \"height\", \"mobile\" }`.",
+  "cfg.relaxCsp": "Remove the `Content-Security-Policy` header from previewed pages. Needed for apps with a strict policy; turn it off to preview with your real policy (sync may stop working).",
+  "cfg.fixCookies": "Rewrite your dev server's cookies to `SameSite=None; Secure` so that sign-in keeps working inside the mosaic. Only affects the preview, never your server.",
+  "cfg.browserPath": "Path to Chrome, Edge, Brave or Chromium, used only for captures. Leave empty to find one automatically.",
+  "cap.untrusted": "In untrusted workspaces the browser path setting is ignored and saved mosaics from the workspace are not opened automatically.",
+  "cap.virtual": "ViewKeeper needs a local dev server and cannot run in virtual workspaces.",
+  "cfg.apiOrigins": "Other origins on this computer that your app calls (an API on another port). ViewKeeper routes them through its proxy so they see your app's origin. Example: `http://localhost:3001`."
+}
