@@ -4,7 +4,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
-import { capture, contactSheet, findBrowser, type CaptureIo, type Shot } from '../core/capture.ts';
+import { randomBytes } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { capture, contactSheet, findBrowser, redirectPage, type CaptureIo, type Shot } from '../core/capture.ts';
 import { findDevice, rotate } from '../core/devices.ts';
 import type { PanelHost } from './panelHost.ts';
 
@@ -12,6 +14,21 @@ const io: CaptureIo = {
   exists: async (p) => fs.existsSync(p),
   // execFile, nunca exec: los argumentos no pasan por un intérprete de órdenes.
   run: (exe, args, timeoutMs) => new Promise((resolve) => execFile(exe, args, { timeout: timeoutMs, windowsHide: true }, (err) => resolve(err ? (typeof err.code === 'number' ? err.code : -1) : 0))),
+  // En la carpeta temporal de la captura (mkdtemp: solo para este usuario), con permisos solo para él y un nombre que nadie adivina.
+  stash: async (url, profileDir) => {
+    const file = path.join(path.dirname(profileDir), `entrada-${randomBytes(12).toString('hex')}.html`);
+    fs.writeFileSync(file, redirectPage(url), { mode: 0o600, flag: 'wx' });
+    return {
+      href: pathToFileURL(file).href,
+      drop: () => {
+        try {
+          fs.rmSync(file, { force: true });
+        } catch {
+          /* se va con la carpeta temporal */
+        }
+      },
+    };
+  },
 };
 
 export function slug(s: string): string {

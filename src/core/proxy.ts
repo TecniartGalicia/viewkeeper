@@ -171,13 +171,15 @@ export interface RunningProxy {
 // ───────────────────────── funciones puras (probadas en src/test/unit/proxy.test.ts)
 
 export function tagFor(target: string): string {
-  return createHash('sha256').update(new URL(target).origin).digest('hex').slice(0, 8);
+  // 128 bits: con 32 bastaba buscar por fuerza bruta un dominio propio con la etiqueta de un localhost ajeno y
+  // compartir su origen, sus cookies y su almacenamiento (escáner de seguridad, F3).
+  return createHash('sha256').update(new URL(target).origin).digest('hex').slice(0, 32);
 }
 
 /** 's-admin-1a2b3c4d.localhost:4000' → 'admin'. Cualquier otro Host se rechaza: es la defensa contra DNS rebinding. */
 export function sessionFromHost(host: string | undefined, port: number, tag: string): string | null {
   if (!host) return null;
-  const m = /^s-([a-z0-9]{1,20})-([a-f0-9]{8})\.localhost:(\d+)$/.exec(host.toLowerCase());
+  const m = /^s-([a-z0-9]{1,20})-([a-f0-9]{32})\.localhost:(\d+)$/.exec(host.toLowerCase());
   if (!m || m[2] !== tag || Number(m[3]) !== port) return null;
   return m[1];
 }
@@ -463,6 +465,8 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   const apis = parseApis(opts.apiOrigins);
   const targets = aliasOrigins(opts.target);
   const seenCookies = new Map<string, Map<string, string>>();
+  /** Por sesión: las cookies que puso el servidor y si eran HttpOnly. La captura las repone igual (F5). */
+  const httpOnly = new Map<string, Map<string, boolean>>();
   /** Bote de cada API en modo 'own', por sesión: «sesión|índice» → nombre → valor y caducidad (ms, o Infinity). */
   const apiJars = new Map<string, Map<string, { v: string; exp: number }>>();
   const tickets = new Map<string, { session: string; expires: number }>();
@@ -522,15 +526,17 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       const t = tickets.get(k);
       tickets.delete(k);
       if (!t || t.session !== session || t.expires < now()) return deny(res, 403);
+      const flags = httpOnly.get(session);
       for (const [name, value] of seenCookies.get(session) ?? []) {
-        if (!/[\r\n;]/.test(name + value)) set.push(`${name}=${value}; Path=/; SameSite=None; Secure`);
+        // La que no sabemos quién puso se repone HttpOnly: más vale una página que no la lea que un script que la robe.
+        if (!/[\r\n;]/.test(name + value)) set.push(`${name}=${value}; Path=/; SameSite=None; Secure${(flags?.get(name) ?? true) ? '; HttpOnly' : ''}`);
       }
     } else if (!safeEqual(q.get('t') ?? '', token)) return deny(res, 403);
     res.writeHead(302, { location: safeLocalPath(q.get('to')), 'set-cookie': set, 'cache-control': 'no-store' });
     res.end();
   };
 
-  const forward = (req: http.IncomingMessage, res: http.ServerResponse, dest: URL, path: string, ctx: Ctx, mayInject: boolean, apiPrefix?: string, jar?: Map<string, string>, own?: { session: string; index: number; gated: boolean }, isAppDoc?: boolean): void => {
+  const forward = (req: http.IncomingMessage, res: http.ServerResponse, dest: URL, path: string, ctx: Ctx, mayInject: boolean, apiPrefix?: string, jar?: Map<string, string>, own?: { session: string; index: number; gated: boolean }, isAppDoc?: boolean, flags?: Map<string, boolean>): void => {
     const html = mayInject && wantsHtml(req);
     const headers = rewriteRequestHeaders(req.headers, ctx, html);
     headers.host = dest.host; // la API ve su propio Host y, como Origin, el de la app
@@ -594,6 +600,13 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           }
         }
         if (jar) for (const c of ur.headers['set-cookie'] ?? []) if (expiresCookie(c)) jar.delete(c.split('=')[0].trim());
+        if (flags) {
+          for (const c of ur.headers['set-cookie'] ?? []) {
+            const name = c.split('=')[0].trim();
+            if (expiresCookie(c)) flags.delete(name);
+            else if (flags.size < 200 || flags.has(name)) flags.set(name, /;\s*httponly\s*(;|$)/i.test(c));
+          }
+        }
         if (own) {
           // Lo que esa API pone se guarda aquí y no llega a la celda: no se mezcla con las cookies de la app.
           for (const c of ownJar ? (ur.headers['set-cookie'] ?? []) : []) {
@@ -708,10 +721,12 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
     }
     seenCookies.set(auth.session, jar);
-    forward(req, res, target, url, ctx, true, undefined, jar, undefined, true);
+    const flags = httpOnly.get(auth.session) ?? new Map<string, boolean>();
+    httpOnly.set(auth.session, flags);
+    forward(req, res, target, url, ctx, true, undefined, jar, undefined, true, flags);
   };
 
-  const server = http.createServer((req, res) => {
+  const onRequest = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     try {
       handle(req, res);
     } catch (e) {
@@ -720,10 +735,15 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
       res.end();
     }
-  });
+  };
+  // Dos servidores, uno por dirección de la propia máquina: el navegador resuelve «*.localhost» a ::1 y a
+  // 127.0.0.1 y prueba primero ::1. Si solo se escuchara en IPv4, otro usuario de la máquina podría escuchar en
+  // [::1] en el mismo puerto y recibir la entrada de las celdas con el testigo (escáner de seguridad, F4).
+  const server = http.createServer(onRequest);
+  const server6 = http.createServer(onRequest);
 
   // WebSocket (recarga en caliente): túnel TCP con la petición reescrita.
-  server.on('upgrade', (req, socket: Duplex, head: Buffer) => {
+  const onUpgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer): void => {
     const auth = authorize(req);
     // Un WebSocket no pasa por CORS: se exige que lo abra la propia celda (el origen por el que ella entró).
     if ('status' in auth || req.headers.origin !== cameBy(req)) {
@@ -760,28 +780,61 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     socket.on('error', drop);
     upstream.on('close', drop);
     socket.on('close', drop);
-  });
+  };
 
-  server.on('connection', (s) => {
-    sockets.add(s);
-    s.on('close', () => sockets.delete(s));
-  });
-
-  return new Promise((resolve, reject) => {
-    // Solo la interfaz local: nunca se escucha en la red. Se intenta primero un puerto derivado del destino:
-    // así la misma app vuelve al mismo origen (conserva localStorage) y no deja una cookie de entrada nueva
-    // en cada apertura. Si está ocupado —un segundo mosaico de la misma app—, uno cualquiera. (N-13)
-    server.once('error', (e: NodeJS.ErrnoException) => {
-      // Ocupado, o reservado por el sistema (Windows aparta franjas de puertos para Hyper-V).
-      if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') return reject(e);
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1');
+  for (const srv of [server, server6]) {
+    srv.on('upgrade', onUpgrade);
+    srv.on('connection', (c) => {
+      sockets.add(c);
+      c.on('close', () => sockets.delete(c));
     });
-    server.once('listening', () => {
+  }
+
+  const listenOn = (srv: http.Server, want: number, host: string): Promise<number> =>
+    new Promise((ok, ko) => {
+      const fail = (e: Error): void => {
+        srv.off('listening', done);
+        ko(e);
+      };
+      const done = (): void => {
+        srv.off('error', fail);
+        ok((srv.address() as net.AddressInfo).port);
+      };
+      srv.once('error', fail);
+      srv.once('listening', done);
+      srv.listen(want, host);
+    });
+  const busy = (e: unknown): boolean => ['EADDRINUSE', 'EACCES'].includes(String((e as NodeJS.ErrnoException).code));
+  // Solo la interfaz local: nunca se escucha en la red. Se intenta primero un puerto derivado del destino:
+  // así la misma app vuelve al mismo origen (conserva localStorage) y no deja una cookie de entrada nueva
+  // en cada apertura. Si está ocupado —un segundo mosaico de la misma app, o alguien en ::1—, otro. (N-13, F4)
+  const claim = async (): Promise<number> => {
+    for (const want of [opts.port ?? preferredPort(opts.target), 0, 0, 0, 0, 0]) {
+      let p: number;
+      try {
+        p = await listenOn(server, want, '127.0.0.1');
+      } catch (e) {
+        // Ocupado, o reservado por el sistema (Windows aparta franjas de puertos para Hyper-V).
+        if (busy(e)) continue;
+        throw e;
+      }
+      try {
+        await listenOn(server6, p, '::1');
+        return p;
+      } catch (e) {
+        if (!busy(e)) return p; // la máquina no tiene IPv6: basta con IPv4
+        await new Promise<void>((r) => server.close(() => r()));
+      }
+    }
+    throw new Error('no free local port on both 127.0.0.1 and ::1');
+  };
+
+  return claim().then((p) => {
+    {
       const addr = server.address() as net.AddressInfo;
-      port = addr.port;
+      port = p;
       gateCookie = GATE_PREFIX + port;
-      resolve({
+      return {
         port,
         address: addr.address,
         token,
@@ -812,10 +865,10 @@ export function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
             for (const s of sockets) s.destroy();
             agentHttp.destroy();
             agentHttps.destroy();
-            server.close(() => done());
+            const closing = [server, server6].filter((x) => x.listening).map((x) => new Promise<void>((r) => x.close(() => r())));
+            void Promise.all(closing).then(() => done());
           }),
-      });
-    });
-    server.listen(opts.port ?? preferredPort(opts.target), '127.0.0.1');
+      };
+    }
   });
 }

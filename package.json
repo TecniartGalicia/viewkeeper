@@ -2,7 +2,7 @@
   "name": "viewkeeper",
   "displayName": "ViewKeeper",
   "description": "See your dev server on several devices and routes at once inside VS Code. Scroll, clicks, typing and navigation stay in sync. Works with Vite, Next.js and any localhost app, hot reload and sign-in included.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "argalla",
   "license": "MIT",
   "icon": "media/icon.png",

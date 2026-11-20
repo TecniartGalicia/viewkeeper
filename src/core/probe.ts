@@ -34,13 +34,21 @@ export async function resolveTarget(origin: string, path: string, timeoutMs = 25
     } catch {
       break;
     }
-    // Dentro del mismo origen lo resuelve la propia celda; a otra web, no se va.
-    if (next.origin === at.origin || !isAlias(next, at) || next.username !== '' || next.password !== '') break;
+    if (!followable(at, next)) break;
     hops.push(next.origin);
     at = next;
   }
   if (hops.length === 0) return start;
   return { origin: at.origin, path: at.pathname + at.search + at.hash, hops };
+}
+
+/**
+ * ¿Se sigue esta redirección al abrir? Solo a otro origen que sea alias de la misma web (dentro del mismo origen lo
+ * resuelve la propia celda; a otra web no se va), sin credenciales y nunca de https a http (F6).
+ */
+export function followable(at: URL, next: URL): boolean {
+  if (next.origin === at.origin || !isAlias(next, at) || next.username !== '' || next.password !== '') return false;
+  return !(at.protocol === 'https:' && next.protocol === 'http:');
 }
 
 /** ¿Contesta algo por HTTP en ese origen? Cualquier respuesta vale (también un 404 o un 500): hay servidor. */

@@ -144,7 +144,8 @@ export class PanelHost implements vscode.Disposable {
     if (!parsed) throw new Error(vscode.l10n.t('This mosaic is not valid.'));
     const unknown = [...new Set(parsed.cells.filter((c) => !findDevice(c.deviceId, opts.customDevices)).map((c) => c.deviceId))];
     const mosaic: Mosaic = { ...parsed, cells: parsed.cells.map((c) => (findDevice(c.deviceId, opts.customDevices) ? c : { ...c, deviceId: 'laptop', landscape: false })) };
-    if (unknown.length) void vscode.window.showWarningMessage(vscode.l10n.t('This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to "viewkeeper.customDevices".', unknown.join(', ')));
+    // Los avisos de VS Code pintan [texto](command:…) como un enlace que ejecuta una orden: sin corchetes ni paréntesis (F2).
+    if (unknown.length) void vscode.window.showWarningMessage(vscode.l10n.t('This mosaic uses devices this computer does not have ({0}); they are shown as Laptop. Add them to "viewkeeper.customDevices".', unknown.map((u) => u.replace(/[[\]()<>`]/g, '')).join(', ')));
     let agentSource = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'agent.js'), 'utf8');
     if (opts.sonda) agentSource = agentSource.replace('/*SONDA-INICIO*/', opts.sonda.inicio).replace('/*SONDA*/', opts.sonda.pregunta);
     const proxy = await startProxy({ target: mosaic.target, agentSource, log: opts.log, pages: proxyPages(), ...opts.proxy });

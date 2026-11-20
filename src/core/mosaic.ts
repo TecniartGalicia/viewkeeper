@@ -33,13 +33,19 @@ export const SYNC_ALL: SyncOptions = { scroll: true, click: true, input: true, n
 export const MAX_CELLS = 12;
 
 const SESSION_RE = /^[a-z0-9]{1,20}$/;
+/** La forma de un identificador de dispositivo, de los de serie o de los propios (devices.ts, parseCustomDevice). */
+export const DEVICE_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** Acepta '3000', 'localhost:3000', 'http://127.0.0.1:5173/ruta'. Devuelve origen y ruta, o undefined. */
 export function normalizeTarget(input: string): { origin: string; path: string } | undefined {
   let s = input.trim();
   if (s === '' || s.startsWith('/')) return undefined; // «/pacientes» es una ruta, no un servidor llamado «pacientes»
   if (/^\d{2,5}$/.test(s)) s = 'http://localhost:' + s;
-  else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'http://' + s;
+  else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    // Sin esquema: un servidor de desarrollo, por http; una web publicada, por https. Si no, un atacante en la red
+    // podría quitar la redirección a https y el proxy, que no tiene HSTS, mandaría el inicio de sesión en claro (F6).
+    s = (isDevHost('http://' + s) ? 'http://' : 'https://') + s;
+  }
   let u: URL;
   try {
     u = new URL(s);
@@ -136,7 +142,8 @@ export function parseMosaic(raw: unknown): Mosaic | undefined {
     if (typeof c !== 'object' || c === null) continue;
     const x = c as Record<string, unknown>;
     if (typeof x.id !== 'string' || !/^[a-z0-9]{1,16}$/i.test(x.id) || seen.has(x.id)) continue;
-    if (typeof x.deviceId !== 'string' || typeof x.path !== 'string') continue;
+    // El identificador del dispositivo viene del repositorio y acaba en textos de la interfaz: solo la forma de un identificador (F2).
+    if (typeof x.deviceId !== 'string' || !DEVICE_ID.test(x.deviceId) || typeof x.path !== 'string') continue;
     const session = typeof x.session === 'string' && SESSION_RE.test(x.session) ? x.session : 'main';
     const group = Number.isInteger(x.group) && (x.group as number) >= 0 && (x.group as number) < MAX_CELLS ? (x.group as number) : 0;
     const locale = typeof x.locale === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(x.locale) ? x.locale : undefined;
