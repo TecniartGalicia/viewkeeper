@@ -336,7 +336,13 @@ try {
 
     // Esperar a que llegue (o a que pasen 4 s) en vez de una pausa fija: en Windows de CI 700 ms no siempre bastan.
     let d = registro.length;
-    await clic(s, 0, 35, 78);
+    // El caso es si el clic llega a las OTRAS celdas: primero tiene que llegar a la del usuario. En Windows de CI el
+    // primer clic tras cargar cayó una vez fuera del botón (ni la celda de origen lo vio): se repite hasta 3 veces.
+    for (let i = 0; i < 3; i++) {
+      d = registro.length;
+      await clic(s, 0, 35, 78);
+      if (await hasta(() => !!cuenta('icono', d)['393'], 2000)) break;
+    }
     await hasta(() => {
       const c = cuenta('icono', d);
       return !!c['768'] && !!c['1366'];
