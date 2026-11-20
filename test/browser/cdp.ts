@@ -105,7 +105,17 @@ export async function abreChrome(): Promise<Navegador | undefined> {
       return sessionId;
     },
     async clic(s, n, x, y) {
-      const r = await evalua<{ l: number; t: number; w: number; cw: number }>(s, `(function(){var f=document.querySelectorAll('iframe')[${n}];var b=f.getBoundingClientRect();return {l:b.left,t:b.top,w:b.width,cw:f.clientWidth};})()`);
+      // Se espera a que la celda deje de moverse: justo tras cargar, el panel aún puede estar recolocando (en los
+      // runners lentos de CI el primer clic caía fuera del elemento).
+      const mide = (): Promise<{ l: number; t: number; w: number; cw: number }> => evalua(s, `(function(){var f=document.querySelectorAll('iframe')[${n}];var b=f.getBoundingClientRect();return {l:b.left,t:b.top,w:b.width,cw:f.clientWidth};})()`);
+      let r = await mide();
+      for (let i = 0; i < 20; i++) {
+        await espera(100);
+        const r2 = await mide();
+        const quieto = Math.abs(r2.l - r.l) < 0.5 && Math.abs(r2.t - r.t) < 0.5 && Math.abs(r2.w - r.w) < 0.5;
+        r = r2;
+        if (quieto) break;
+      }
       const k = r.w / r.cw;
       await raton(s, r.l + x * k, r.t + y * k);
     },

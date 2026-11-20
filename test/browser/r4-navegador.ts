@@ -416,7 +416,8 @@ try {
     await hasta(() => registro.slice(d2).filter((r) => r.ev.startsWith('cargada:/form')).length >= 2);
     await espera(300);
     await evalua(s, `window.postMessage({ t: 'reload' }, location.origin)`);
-    await hasta(() => peticiones.filter((p) => p.startsWith('app1 GET /form')).length - antes >= 4, 6000);
+    // El primer mosaico queda en una pestaña de fondo: su recarga puede tardar más en un runner cargado.
+    await hasta(() => peticiones.filter((p) => p.startsWith('app1 GET /form')).length - antes >= 4, 15000);
     const despues = peticiones.filter((p) => p.startsWith('app1 GET /form')).length;
     // antes → +1 (segundo mosaico de la misma app) +3 (recarga del primero)
     caso('COK-1b', '[H-3] abrir un segundo mosaico deja al primero sin acceso', despues - antes < 4, `peticiones de /form a la app 1 tras abrir otro mosaico de la misma app (1) y recargar las 3 celdas del primero (3): ${despues - antes} de 4`);

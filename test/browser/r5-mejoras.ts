@@ -310,9 +310,13 @@ try {
       return false;
     };
     // Enlace relativo con <base>: se queda en la celda, con su consulta y su ancla.
-    d = registro.length;
-    await clic(s, 0, 60, 30);
-    const base = await cargadas('/ok', d, 1, 6000);
+    // El primer clic tras cargar tiene que llegar al enlace (la página lo apunta); si no, se repite.
+    let base = false;
+    for (let i = 0; i < 3 && !base; i++) {
+      d = registro.length;
+      await clic(s, 0, 60, 30);
+      base = await cargadas('/ok', d, 1, 6000);
+    }
     const ruta = await evalua<string>(s, `document.querySelector('.ruta').textContent`);
     caso('AUD-A4b', '[A-4, G15] con <base> al dominio real, un enlace relativo saca a la celda, o pierde la consulta o el ancla', !base || ruta !== '/ok?desde=base#ancla', `¿llegó a /ok? ${base}; ruta en el rótulo: ${ruta}`);
     // La orden «nav» del panel con <base> en la página: vuelve sin salir de la celda.
