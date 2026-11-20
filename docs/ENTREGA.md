@@ -1,4 +1,6 @@
-# Entrega — ViewKeeper 0.1.0
+# Entrega — ViewKeeper 0.2.0
+
+**0.2.0 (20-11):** el plan de mejoras entero (`docs/PLAN-MEJORAS.md`), tras dos auditorías independientes y el escáner de seguridad. Lo nuevo y sus límites están en el README y en el CHANGELOG; el registro, en `docs/EJECUCION.md`. Lo que sigue de este documento es la entrega de la 0.1.0, con las tablas puestas al día.
 
 Plan: `Desktop/Apps/proyectos varios/ideasVs/15-PLAN-EJECUCION.md` · Registro: `docs/EJECUCION.md`
 Fecha: 2026-11-19
@@ -22,9 +24,9 @@ La puerta de la ficha: ≥ 500 instalaciones, alguna reseña o issue real. Si no
 |---|---|---|
 | Extensión en el Marketplace | https://marketplace.visualstudio.com/items?itemName=argalla.viewkeeper | `code --install-extension argalla.viewkeeper`, arrancar un servidor de desarrollo y pulsar **ViewKeeper** en la barra de estado |
 | Extensión en Open VSX (VSCodium, Cursor, Windsurf) | https://open-vsx.org/extension/argalla/viewkeeper | Ver «Comprobación final» abajo |
-| Descarga directa | https://github.com/TecniartGalicia/viewkeeper/releases/tag/v0.1.0 | `viewkeeper-v0.1.0.vsix`, 100 KB |
-| Repositorio público, MIT | https://github.com/TecniartGalicia/viewkeeper | CI verde en Ubuntu y Windows |
-| Pruebas | en el repo | `npm ci && npm run check` (41 unitarias, tipos, lint, traducciones); `npm run test:browser` (64 casos en Chrome sin ventana); `npm run test:integration` (8 pruebas dentro de un VS Code real) |
+| Descarga directa | https://github.com/TecniartGalicia/viewkeeper/releases | El `.vsix` de cada versión |
+| Repositorio público, MIT | https://github.com/TecniartGalicia/viewkeeper | CI en Ubuntu, Windows y macOS |
+| Pruebas | en el repo | `npm ci && npm run check` (73 unitarias, tipos, lint, traducciones); `npm run test:browser` (100 casos en Chrome sin ventana); `npm run test:integration` (12 pruebas dentro de un VS Code real); `node test/integration/run-remoto.ts` (ventana WSL) |
 | Demo grabada con la extensión de verdad | `media/shots/` | `VK_CODE=<Code.exe> node test/integration/grabar.ts foto` (o `demo`) la vuelve a grabar |
 
 Publicar una versión nueva: subir `version` en `package.json` y `CHANGELOG.md`, commit en `main`, `git tag -a vX.Y.Z` y `git push origin vX.Y.Z`. El flujo comprueba, crea la release de GitHub y publica en las dos tiendas, con reintentos y saltándose lo que ya esté publicado.
@@ -34,9 +36,9 @@ Publicar una versión nueva: subir `version` en `package.json` y `CHANGELOG.md`,
 | Qué | Por qué |
 |---|---|
 | Publicar en redes | Es tuyo (tarea 1) |
-| Cursor | No probado; VSCodium sí, con la suite entera en verde |
-| macOS y Linux reales | El CI corre en Ubuntu (banco e integración en verde); macOS sin probar |
-| Ventanas remotas (WSL, SSH, Codespaces) | No funciona: el proxy queda en la otra máquina. La extensión lo dice en vez de abrir un panel en blanco, y el README también |
+| Cursor | No probado (no está instalado en este PC); VSCodium sí, con la suite entera en verde |
+| Ventanas remotas por SSH y contenedores | Probado en WSL. SSH y contenedores usan el reenvío de puertos de VS Code y no se han probado: la extensión Dev Containers no conecta cuando VS Code arranca en modo prueba. Declarado en el README |
+| VS Code en el navegador (vscode.dev, Codespaces en una pestaña) | No cabe: las celdas necesitan `*.localhost`. La extensión lo dice |
 | Inicio de sesión con un proveedor externo (Google, Auth0) | No cabe en una celda; declarado en el README |
 
 ## Decisiones que tomé yo

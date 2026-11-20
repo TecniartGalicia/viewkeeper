@@ -165,7 +165,16 @@ try {
     await hasta(() => alHost('err').filter((m) => m.t === 'errors').length >= 3, 5000);
     await espera(300);
     const ins = await insignias();
-    caso('M6-1', 'el rótulo no cuenta los errores de cada celda (móvil 2, tableta 1, escritorio ninguno)', j(ins) !== j(['2', '1', null]), `insignias por celda: ${j(ins)}`);
+    // Si falla, se dice con qué ancho cargó cada celda y qué errores tiene: en macOS falló una vez sin dejar rastro.
+    let detalle6 = '';
+    if (j(ins) !== j(['2', '1', null])) {
+      for (const id of ['b', 'c']) await clicPanel(s, `[data-k="${id}:err"]`);
+      await espera(300);
+      const listas = await evalua<Record<string, string[]>>(s, `Object.fromEntries([...document.querySelectorAll('figure')].map(function (f) { return [f.dataset.id, [...f.querySelectorAll('.errs li')].map(function (l) { return l.dataset.kind + ': ' + l.textContent; })]; }))`);
+      detalle6 = `; anchos al cargar: ${j(registro.filter((r) => r.ev === 'cargada:/err').map((r) => r.w))}; errores por celda: ${j(listas)}`;
+      for (const id of ['b', 'c']) await clicPanel(s, `[data-k="${id}:err"]`);
+    }
+    caso('M6-1', 'el rótulo no cuenta los errores de cada celda (móvil 2, tableta 1, escritorio ninguno)', j(ins) !== j(['2', '1', null]), `insignias por celda: ${j(ins)}${detalle6}`);
 
     await clicPanel(s, '[data-k="a:err"]');
     await espera(200);
