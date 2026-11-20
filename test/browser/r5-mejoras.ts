@@ -297,11 +297,17 @@ try {
     caso('AUD-A1', '[A-1] un fetch a la propia app con una ruta «//host/…» sale a otro servidor con sus cabeceras', alAjeno.length > 0 || !alApp.some((x) => x.includes('//localhost')), `al servidor ajeno: ${j(alAjeno)}; a la app: ${j(alApp)}; la página vio: ${ev('fetch-doble:')}`);
     caso('AUD-A4a', '[A-4] con <base> al dominio real, un fetch relativo no pasa por la celda', ev('fetch-base:') !== 'fetch-base:dato-de-la-app', ev('fetch-base:'));
     caso('AUD-G11', '[G11] un XHR al dominio completo de la app no pasa por la celda', ev('xhr-abs:') !== 'xhr-abs:dato-de-la-app', ev('xhr-abs:'));
-    const volver = async (): Promise<void> => {
-      const d0 = registro.length;
-      await evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '/agente' }, location.origin)`);
-      await cargadas('/agente', d0, 1, 6000);
-      await espera(500);
+    // Vuelve a /agente y espera a que cargue (en macOS el runner es lento: hasta tres intentos). Dice si llegó.
+    const volver = async (): Promise<boolean> => {
+      for (let i = 0; i < 3; i++) {
+        const d0 = registro.length;
+        await evalua(s, `window.postMessage({ t: 'drive', group: 0, path: '/agente' }, location.origin)`);
+        if (await cargadas('/agente', d0, 1, 6000)) {
+          await espera(800);
+          return true;
+        }
+      }
+      return false;
     };
     // Enlace relativo con <base>: se queda en la celda, con su consulta y su ancla.
     d = registro.length;
@@ -320,11 +326,11 @@ try {
     await clic(s, 0, 60, 150);
     await hasta(() => alApp.length > n0, 5000);
     caso('AUD-A3', '[A-3, G5] form.submit() con POST al dominio completo se va del proxy, o deja de ser POST', !alApp.slice(n0).includes('POST /recibe?via=submit'), `lo que recibió la app: ${j(alApp.slice(n0))}`);
-    await volver();
+    const enAgente = await volver();
     const n1 = alApp.length;
     await clic(s, 0, 60, 210);
-    await hasta(() => alApp.length > n1, 5000);
-    caso('AUD-G9', '[G9] un botón con formaction al dominio completo se va del proxy', !alApp.slice(n1).includes('POST /recibe?via=formaction'), `lo que recibió la app: ${j(alApp.slice(n1))}`);
+    await hasta(() => alApp.length > n1, 6000);
+    caso('AUD-G9', '[G9] un botón con formaction al dominio completo se va del proxy', !alApp.slice(n1).includes('POST /recibe?via=formaction'), `lo que recibió la app: ${j(alApp.slice(n1))}; ¿había vuelto a /agente antes del clic? ${enAgente}; últimos eventos de la página: ${j(registro.slice(-6).map((r) => r.ev))}`);
   }
 
   // ══════════ Auditoría B · el panel: rutas sin HTML, errores en masa, ampliar, «+» de fila, cambiar de dispositivo
