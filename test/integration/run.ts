@@ -33,7 +33,7 @@ try {
   const total = r.pruebas?.length ?? 0;
   const ok = (r.pruebas ?? []).filter((p) => p.ok).length;
   console.log(`\n${ok} de ${total} en verde`);
-  codigo = !r.error && total >= 8 && ok === total ? 0 : 1;
+  codigo = !r.error && total >= 12 && ok === total ? 0 : 1;
 } catch (e) {
   console.error('No se pudo ejecutar la suite de integración', e);
 } finally {

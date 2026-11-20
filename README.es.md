@@ -2,7 +2,7 @@
 
 **Tu servidor de desarrollo en varios dispositivos y rutas a la vez, dentro de VS Code. Lo que haces en una vista pasa en todas.**
 
-Te desplazas en el móvil y la tableta y el portátil se desplazan con él. Escribes en un buscador y los otros dos se rellenan. Pulsas un enlace y todas las vistas te siguen. Funciona con la app que estás construyendo de verdad —Vite, Next.js, Astro, cualquier cosa en localhost—, con la recarga en caliente intacta, aunque tu app se niegue a dejarse incrustar y aunque haya que iniciar sesión.
+Te desplazas en el móvil y la tableta y el portátil se desplazan con él. Escribes en un buscador y los otros dos se rellenan. Pulsas un enlace y todas las vistas te siguen. Funciona con la app que estás construyendo de verdad —Vite, Next.js, Astro, cualquier cosa en localhost—, con la recarga en caliente intacta, aunque tu app se niegue a dejarse incrustar y aunque haya que iniciar sesión. También abre una web publicada, en un modo más seguro de solo mirar.
 
 [English](README.md)
 
@@ -25,7 +25,12 @@ Todo es **gratis**.
 - **Captura**: un PNG por vista y una hoja de contactos con el mosaico entero, con la sesión iniciada, usando el Chrome, Edge o Brave que ya tienes. No descarga nada.
 - **Mosaicos guardados** en `.vscode/viewkeeper.json`, para que todo el equipo abra las mismas pantallas.
 - **La recarga en caliente sigue en caliente.** Vite y Next.js actualizan cada vista sin recargarla.
-- **También con una API en otro puerto.** Si tu frontal llama a `localhost:3001` y el navegador lo bloquea dentro del mosaico, ViewKeeper te ofrece pasarlo por él.
+- **También con una API en otro puerto o en otro servidor.** Si tu frontal llama a `localhost:3001` o a `https://api.ejemplo.com` y el navegador lo bloquea dentro del mosaico, ViewKeeper te ofrece pasarlo por él, solo si esa API ya admite el origen de tu app.
+- **Errores de JavaScript por vista.** El rótulo de cada vista cuenta los errores de la página que enseña; pulsando el número se leen. «En el móvil falla y en el portátil no», de un vistazo.
+- **Seguir al editor** (opcional): abres `app/precios/page.tsx` y el mosaico va a `/precios`. Next.js, SvelteKit, Astro, Nuxt y HTML suelto, también dentro de un monorepo.
+- **Cambiar la ruta de una fila desde su rótulo**, añadir un dispositivo a una fila de la matriz y **ampliar una vista** a todo el panel (Esc para volver).
+- **Reabre lo que tenías.** El botón de la barra de estado recupera el último mosaico del proyecto, con sus dispositivos y sus rutas, si su servidor de desarrollo está en marcha.
+- **Ventanas remotas**: probado en WSL. SSH y contenedores pasan por el reenvío de puertos del propio VS Code y aún no se han probado; si allí una vista se queda en blanco, abre un issue.
 
 ![La misma app en un móvil, una tableta y un portátil, dos rutas, cada fila sincronizada](https://raw.githubusercontent.com/TecniartGalicia/viewkeeper/HEAD/media/shots/mosaic.png)
 
@@ -41,10 +46,12 @@ Así que ViewKeeper pone un proxy pequeño en `127.0.0.1` entre las vistas y tu 
 ## Qué no es
 
 - **No es un emulador.** Cada vista tiene el tamaño, el agente de usuario y el idioma del dispositivo tal como los ve JavaScript, y sin barra de desplazamiento en los móviles. No emula la densidad de píxeles ni los eventos táctiles, y tu servidor ve el agente de usuario del propio editor. Para emular un dispositivo exacto, el navegador integrado de VS Code lo hace bien.
-- **Iniciar sesión a través de otro sitio** (redirecciones a Google, GitHub, Auth0) no cabe en una vista: el panel solo deja hablar a cada vista con tu servidor. Usa una cuenta de prueba local.
-- **Por ahora, solo ventanas locales.** En una ventana remota (WSL, SSH, contenedores, Codespaces) las vistas no llegan al proxy, y ViewKeeper lo dice en vez de abrir un panel en blanco.
+- **Iniciar sesión a través de otro sitio** (redirecciones a Google, GitHub, Auth0) no cabe en una vista: el panel solo deja hablar a cada vista con tu propia app. La vista dice adónde quería ir la página en vez de quedarse en blanco. Usa una cuenta de pruebas.
+- **VS Code en el navegador** (vscode.dev, Codespaces en una pestaña) no puede enseñar las vistas: necesitan `*.localhost`. ViewKeeper lo dice.
 - **Durante la vista previa tu app corre algo distinta**: sin su Content-Security-Policy, con las cookies reescritas y desde otro origen. Para maquetar y probar comportamiento da igual; si estás depurando justo una de esas tres cosas, apaga `viewkeeper.relaxCsp` / `viewkeeper.fixCookies` o usa un navegador normal.
-- **También sirve con una web publicada**, con cuidado: cada clic y cada tecla se repiten en todas las vistas, así que con datos reales apaga la sincronización de clics y escritura o usa una cuenta de pruebas. El inicio de sesión a través de otro sitio no funciona (ver arriba), una API en otro dominio rechaza el origen de la vista previa, y los enlaces escritos con el dominio completo salen del mosaico.
+- **También sirve con una web publicada, en modo solo mirar**: ViewKeeper abre su dominio principal (`ejemplo.com` → `https://www.ejemplo.com`) con la sincronización de clics y de escritura **apagada**, porque si no cada clic y cada tecla pasarían una vez por vista sobre datos reales. El desplazamiento y la navegación siguen sincronizados. Si estás con datos de prueba, enciende las otras dos en la barra. Los enlaces, formularios y `location.href` escritos con el dominio completo de la web se quedan dentro de la vista; un `window.open` hacia él abre la web real fuera del mosaico.
+- **La cuenta de errores es por documento**: en una app de una sola página no vuelve a cero al cambiar de pantalla sin recargar.
+- **Seguir al editor** puede tomar por página un fichero de una carpeta llamada `pages/` que no lo sea. Por eso nace apagado.
 - Cuando dos vistas tienen maquetaciones muy distintas, un clic solo se repite si el elemento es de verdad el mismo (misma etiqueta, rol, nombre, enlace). Si no, esa vista no te sigue, antes que pulsar otro botón.
 
 ## Comandos
@@ -58,9 +65,10 @@ Así que ViewKeeper pone un proxy pequeño en `127.0.0.1` entre las vistas y tu 
 | **ViewKeeper: Guardar este mosaico en el proyecto** / **Abrir un mosaico guardado** | `.vscode/viewkeeper.json` |
 | **ViewKeeper: Capturar el mosaico** / **(páginas enteras)** | PNG y hoja de contactos |
 | **ViewKeeper: Recargar todas las celdas** | |
+| **ViewKeeper: Seguir al editor: encender / apagar** | También un botón de la barra |
 | **ViewKeeper: Diagnosticar** | Lo que el proxy vio y no pudo hacer |
 
-La barra del propio panel añade dispositivos y enciende o apaga cada tipo de sincronización, y cada vista puede cambiar de dispositivo, girarse o cerrarse.
+La barra del propio panel cambia la dirección, añade dispositivos, enciende o apaga cada tipo de sincronización y sigue al editor. Cada vista puede cambiar de dispositivo, girarse, ampliarse o cerrarse; su ruta abre una lista para llevar toda la fila a otra página; y su número en rojo enseña los errores de JavaScript de la página.
 
 ## Ajustes
 
@@ -68,20 +76,21 @@ La barra del propio panel añade dispositivos y enciende o apaga cada tipo de si
 |---|---|---|
 | `viewkeeper.defaultDevices` | `["iphone-15", "ipad-mini", "laptop"]` | Dispositivos de un mosaico nuevo |
 | `viewkeeper.customDevices` | `[]` | Los tuyos: `{ "id", "name", "width", "height", "mobile" }` |
-| `viewkeeper.apiOrigins` | `[]` | API en otros puertos locales que pasan por el proxy. Solo si ya admiten por CORS el origen de tu app |
+| `viewkeeper.apiOrigins` | `[]` | API que pasan por el proxy: en otros puertos locales, o servidores `https://`. Solo si ya admiten por CORS el origen de tu app |
+| `viewkeeper.followEditor` | `false` | Abrir el fichero de una página lleva el mosaico a su ruta |
 | `viewkeeper.relaxCsp` | `true` | Quitar la CSP de tu app durante la vista previa |
 | `viewkeeper.fixCookies` | `true` | Reescribir las cookies para poder iniciar sesión dentro del panel |
 | `viewkeeper.browserPath` | `""` | Navegador para las capturas; si está vacío, lo busca |
 
 ## Privacidad y seguridad
 
-Sin telemetría, sin cuenta y sin ninguna petición de red propia. El proxy solo escucha en `127.0.0.1`, solo sirve a las vistas del panel que lo abrió (un testigo aleatorio de 192 bits en una cookie), rechaza cualquier otro nombre de servidor y no admite peticiones lanzadas desde otras webs. Lo que escribes en una vista se reparte a las demás dentro del panel y nunca llega al host de la extensión. Detalles en [PRIVACY.es.md](PRIVACY.es.md); para avisar de una vulnerabilidad, [SECURITY.md](SECURITY.md).
+Sin telemetría y sin cuenta. Sus únicas peticiones de red propias: al abrir una web publicada, una para saber su dominio principal; y antes de pasar una API por el proxy, una pregunta CORS a esa API. El proxy solo escucha en `127.0.0.1`, solo sirve a las vistas del panel que lo abrió (un testigo aleatorio de 192 bits en una cookie), rechaza cualquier otro nombre de servidor y no admite peticiones lanzadas desde otras webs. Lo que escribes en una vista, y el texto de los errores de una página, se quedan dentro del panel y nunca llegan al host de la extensión. Una API de otro servidor que pases por el proxy no recibe la sesión de tu app: el proxy le guarda aparte sus propias cookies y solo le manda las que tu app puso para el dominio de esa API. Detalles en [PRIVACY.es.md](PRIVACY.es.md); para avisar de una vulnerabilidad, [SECURITY.md](SECURITY.md).
 
-El proxy y el motor de sincronización pasaron dos auditorías independientes antes de la primera versión, con un banco de 64 casos de ataque y comportamiento (proxy, sincronización y el panel real en Chrome sin ventana) que corre en CI.
+El proxy y el motor de sincronización pasan auditorías independientes antes de cada versión (tres antes de la primera, dos más antes de la 0.2.0), con un banco de casos de ataque y comportamiento (proxy, sincronización y el panel real en Chrome sin ventana) que corre en CI en Linux, Windows y macOS.
 
 ## Requisitos
 
-VS Code 1.95 o posterior, una ventana local y un servidor de desarrollo en `http://localhost`. Para las capturas, Chrome, Edge, Brave o Chromium.
+VS Code 1.95 o posterior (también VSCodium y otros editores que instalan desde Open VSX). Un servidor de desarrollo en `localhost`, o una web publicada. Para las capturas, Chrome, Edge, Brave o Chromium en la máquina donde corre la extensión.
 
 ---
 

@@ -19,7 +19,7 @@ export default [
   {
     // El agente corre dentro de la página del usuario: ES2017, script clásico, sin dependencias.
     files: ['media/agent.js'],
-    languageOptions: { ecmaVersion: 2017, sourceType: 'script', globals: { ...globals.browser, __VK_PANEL: 'readonly', __VK_APIS: 'readonly' } },
+    languageOptions: { ecmaVersion: 2017, sourceType: 'script', globals: { ...globals.browser, __VK_PANEL: 'readonly', __VK_APIS: 'readonly', __VK_TARGETS: 'readonly' } },
     rules: { 'no-undef': 'error', 'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }], eqeqeq: ['error', 'smart'], 'no-redeclare': 'error' },
   },
 ];

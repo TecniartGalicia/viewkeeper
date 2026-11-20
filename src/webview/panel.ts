@@ -7,7 +7,7 @@ import { rowScales } from '../core/devices.ts';
 /** Separación entre celdas y ancho mínimo de una celda (su rótulo tiene que caber): los mismos que en el CSS. */
 const GAP = 14;
 const MIN_CELL = 230;
-import type { Cell, Edit, SyncOptions } from '../core/mosaic.ts';
+import { MAX_CELLS, type Cell, type Edit, type SyncOptions } from '../core/mosaic.ts';
 import { REARM_MS, SyncRouter, pathOf, type AgentCommand, type AgentEvent } from '../core/sync.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
@@ -40,6 +40,14 @@ export interface PanelText {
   remove: string;
   empty: string;
   session1: string;
+  deployed: string;
+  deployedHint: string;
+  route: string;
+  addToRow: string;
+  zoom: string;
+  follow: string;
+  errors: string;
+  left: string;
 }
 export interface PanelState {
   name: string;
@@ -49,6 +57,10 @@ export interface PanelState {
   /** Solo en la sonda: reenvía al host todo lo que dicen los agentes. El producto no lo activa nunca. */
   sonda: boolean;
   text: PanelText;
+  /** El destino no es un servidor de desarrollo: se avisa en la barra. */
+  deployed?: boolean;
+  /** El mosaico sigue al editor: abrir el fichero de una página lleva la fila a su ruta. */
+  follow?: boolean;
 }
 
 const vscode = acquireVsCodeApi();
@@ -61,7 +73,18 @@ interface Live {
   frame: HTMLIFrameElement;
   /** Lo que, si cambia, obliga a volver a cargar la celda (otra sesión, otro agente de usuario…). */
   key: string;
+  /** Errores de JavaScript del documento que la celda enseña ahora. El texto no sale de este panel. */
+  errors: { kind: string; msg: string }[];
+  errorCount: number;
+  errorsOpen: boolean;
+  /** Saludó el agente del documento que está cargando. */
+  greeted: boolean;
+  /** El documento que enseña cargó sin agente. */
+  agentless: boolean;
 }
+const MAX_ERRORS_KEPT = 20;
+/** Celda ampliada a todo el panel (las demás siguen vivas y sincronizadas, sin verse). No es parte del mosaico. */
+let zoomed: string | undefined;
 const live = new Map<string, Live>();
 let state: PanelState | undefined;
 const router = new SyncRouter([], { scroll: true, click: true, input: true, nav: true });
@@ -90,6 +113,8 @@ const ICONS: Record<string, string> = {
   rotate: '<path d="M2.8 7.2A5.2 5.2 0 0 1 12 4.3"/><path d="M12.4 1.8v2.8H9.6"/><path d="M13.2 8.8A5.2 5.2 0 0 1 4 11.7"/><path d="M3.6 14.2v-2.8h2.8"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   chevron: '<path d="M4.5 6.5 8 10l3.5-3.5"/>',
+  expand: '<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
+  file: '<path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/>',
   globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11"/><path d="M8 2.5c1.6 1.6 2.3 3.5 2.3 5.5S9.6 11.9 8 13.5C6.4 11.9 5.7 10 5.7 8S6.4 4.1 8 2.5z"/>',
 };
 function icon(name: string): SVGSVGElement {
@@ -120,7 +145,7 @@ function withKey<T extends HTMLElement>(el: T, k: string): T {
 }
 const command = (c: string): void => vscode.postMessage({ t: 'command', command: c });
 
-const pick = (cell?: string): void => vscode.postMessage({ t: 'pick', cell });
+const pick = (cell?: string, group?: number): void => vscode.postMessage({ t: 'pick', cell, group });
 
 function deviceButton(c: CellView): HTMLButtonElement {
   const b = document.createElement('button');
@@ -160,7 +185,15 @@ function renderBar(s: PanelState): void {
     withKey(button(s.text.save, 'save', () => command('save')), 'bar:save'),
     withKey(button(s.text.session, 'user', () => command('addSession')), 'bar:addSession'),
     withKey(button(s.text.matrix, 'grid', () => command('openMatrix')), 'bar:openMatrix'),
+    withKey(button(s.text.follow, 'file', () => command('toggleFollowEditor'), { pressed: s.follow === true }), 'bar:follow'),
   );
+  if (s.deployed) {
+    const live = document.createElement('span');
+    live.className = 'vivo';
+    live.textContent = s.text.deployed;
+    live.title = s.text.deployedHint;
+    barEl.append(live);
+  }
 }
 
 // ───────────────────────── celdas
@@ -184,9 +217,14 @@ function caption(c: CellView, fig: HTMLElement): void {
   dim.textContent = `${c.width}×${c.height}`;
   const pct = document.createElement('span');
   pct.className = 'dim pct';
-  const where = document.createElement('code');
+  // La ruta es un botón: lleva toda la fila a otra página (el host pregunta cuál).
+  const where = document.createElement('button');
+  where.type = 'button';
   where.className = 'ruta';
+  where.dataset.k = `${c.id}:ruta`;
+  where.title = s.text.route;
   where.textContent = live.get(c.id)?.fig.querySelector('.ruta')?.textContent ?? c.path;
+  where.addEventListener('click', () => vscode.postMessage({ t: 'route', cell: c.id }));
   cap.append(sel, dim, pct);
   if (c.session !== 'main') {
     const ses = document.createElement('span');
@@ -197,10 +235,66 @@ function caption(c: CellView, fig: HTMLElement): void {
   // Girar y quitar, juntos y a la derecha.
   const acc = document.createElement('span');
   acc.className = 'acc';
-  acc.append(withKey(button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), `${c.id}:rot`), withKey(button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }), `${c.id}:del`));
-  cap.append(where, acc);
+  acc.append(
+    withKey(button(s.text.zoom, 'expand', () => toggleZoom(c.id), { iconOnly: true, pressed: zoomed === c.id }), `${c.id}:zoom`),
+    withKey(button(s.text.rotate, 'rotate', () => edit({ op: 'rotate', cell: c.id }), { iconOnly: true }), `${c.id}:rot`),
+    withKey(button(s.text.remove, 'close', () => edit({ op: 'remove', cell: c.id }), { iconOnly: true }), `${c.id}:del`),
+  );
+  cap.append(where, errorBadge(c.id), acc);
   fig.querySelector('figcaption')?.remove();
   fig.prepend(cap);
+  paintErrors(c.id);
+}
+
+// ───────────────────────── errores de la página, por celda
+
+/** El contador del rótulo. Oculto mientras no haya errores; al pulsarlo se despliega la lista. */
+function errorBadge(id: string): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'err';
+  b.dataset.k = `${id}:err`;
+  b.hidden = true;
+  b.addEventListener('click', () => {
+    const l = live.get(id);
+    if (!l) return;
+    l.errorsOpen = !l.errorsOpen;
+    paintErrors(id);
+  });
+  return b;
+}
+
+function paintErrors(id: string): void {
+  const l = live.get(id);
+  if (!l || !state) return;
+  const b = l.fig.querySelector<HTMLButtonElement>('button.err');
+  if (b) {
+    b.hidden = l.errorCount === 0;
+    // El agente deja de contar en 50 (una página en bucle de errores): se dice que hay más.
+    b.textContent = l.errorCount >= 50 ? '50+' : String(l.errorCount);
+    b.title = `${l.errorCount} ${state.text.errors}`;
+    b.setAttribute('aria-label', b.title);
+    b.setAttribute('aria-expanded', String(l.errorsOpen));
+  }
+  l.fig.querySelector('.errs')?.remove();
+  if (!l.errorsOpen || l.errorCount === 0) return;
+  const list = document.createElement('ul');
+  list.className = 'errs';
+  for (const e of l.errors) {
+    const li = document.createElement('li');
+    li.textContent = e.msg; // texto de la página: siempre como texto, nunca como HTML
+    li.dataset.kind = e.kind;
+    list.append(li);
+  }
+  l.fig.querySelector('figcaption')?.after(list);
+}
+
+function toggleZoom(id: string): void {
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.k;
+  zoomed = zoomed === id ? undefined : id;
+  if (state) for (const c of state.cells) if (live.has(c.id)) caption(c, (live.get(c.id) as Live).fig);
+  layout();
+  if (focused) document.querySelector<HTMLElement>(`[data-k="${CSS.escape(focused)}"]`)?.focus();
 }
 
 function newCell(c: CellView): Live {
@@ -212,11 +306,22 @@ function newCell(c: CellView): Live {
   // El nombre lleva la configuración de la celda: el agente la lee de forma síncrona al arrancar.
   f.name = 'vk:' + JSON.stringify(c.cfg);
   f.title = c.label;
+  // Nace con el tamaño del dispositivo: un iframe sin tamaño mide 300×150, y en una máquina lenta la página llegaba a
+  // arrancar con ese ancho antes de que la colocación se lo cambiara (lo vio el CI de macOS: tableta a 300 px).
+  f.width = String(c.width);
+  f.height = String(c.height);
   // Sin allow-top-navigation: una app con código anti-iframe no puede llevarse el panel por delante.
   f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads');
   stage.append(f);
   fig.append(stage);
-  return { view: c, fig, frame: f, key: cellKey(c) };
+  const l: Live = { view: c, fig, frame: f, key: cellKey(c), errors: [], errorCount: 0, errorsOpen: false, greeted: false, agentless: false };
+  // El agente saluda antes de que el documento termine de cargar. Un documento que carga sin saludar (una ruta que
+  // contesta JSON o texto, un error del servidor sin HTML) no tiene agente: las órdenes no le llegarían (B-10).
+  f.addEventListener('load', () => {
+    l.agentless = !l.greeted;
+    l.greeted = false;
+  });
+  return l;
 }
 
 function layout(): void {
@@ -226,26 +331,49 @@ function layout(): void {
   const top = barEl.getBoundingClientRect().height;
   // Alto de cada fila: el de la ventana repartido entre filas, menos el rótulo de las celdas.
   const availH = Math.max(160, (window.innerHeight - top - 24) / Math.max(1, rows.size) - 56);
-  const availW = Math.max(200, rootEl.clientWidth - 26);
+  // Con varias filas cada una lleva al final su botón «+»: se le reserva sitio.
+  const availW = Math.max(200, rootEl.clientWidth - 26 - (rows.size > 1 ? 42 : 0));
+  if (zoomed && !state.cells.some((c) => c.id === zoomed)) zoomed = undefined;
+  rootEl.classList.toggle('ampliado', zoomed !== undefined);
+  for (const c of state.cells) live.get(c.id)?.fig.classList.toggle('oculta', zoomed !== undefined && c.id !== zoomed);
+  if (zoomed) {
+    const c = state.cells.find((x) => x.id === zoomed) as CellView;
+    const l = live.get(c.id);
+    if (l) {
+      const s = rowScales([c], Math.max(200, rootEl.clientWidth - 26), Math.max(160, window.innerHeight - top - 24 - 56), GAP, MIN_CELL)[0];
+      size(l, c, s);
+    }
+    for (const row of rows.values()) {
+      const scales = rowScales(row, availW, availH, GAP, MIN_CELL);
+      row.forEach((o, i) => {
+        const lo = live.get(o.id);
+        if (lo && o.id !== zoomed && !lo.frame.getAttribute('width')) size(lo, o, scales[i]);
+      });
+    }
+    return;
+  }
   for (const row of rows.values()) {
     const scales = rowScales(row, availW, availH, GAP, MIN_CELL);
     row.forEach((c, i) => {
       const l = live.get(c.id);
-      if (!l) return;
-      const stage = l.frame.parentElement as HTMLElement;
-      const s = scales[i];
-      l.frame.width = String(c.width);
-      l.frame.height = String(c.height);
-      l.frame.style.transform = `scale(${s})`;
-      stage.style.width = `${Math.round(c.width * s)}px`;
-      stage.style.height = `${Math.round(c.height * s)}px`;
-      // En una celda estrecha el rótulo se compacta (sin medidas) para no partirse en dos líneas.
-      l.fig.classList.toggle('estrecha', c.width * s < 320);
-      l.fig.style.width = `${Math.max(MIN_CELL, Math.round(c.width * s))}px`;
-      const pct = l.fig.querySelector('.pct');
-      if (pct) pct.textContent = `${Math.round(s * 100)} %`;
+      if (l) size(l, c, scales[i]);
     });
   }
+}
+
+/** Pone una celda a una escala. El iframe conserva siempre el tamaño del dispositivo: la página no se entera. */
+function size(l: Live, c: CellView, s: number): void {
+  const stage = l.frame.parentElement as HTMLElement;
+  l.frame.width = String(c.width);
+  l.frame.height = String(c.height);
+  l.frame.style.transform = `scale(${s})`;
+  stage.style.width = `${Math.round(c.width * s)}px`;
+  stage.style.height = `${Math.round(c.height * s)}px`;
+  // En una celda estrecha el rótulo se compacta (sin medidas) para no partirse en dos líneas.
+  l.fig.classList.toggle('estrecha', c.width * s < 320);
+  l.fig.style.width = `${Math.max(MIN_CELL, Math.round(c.width * s))}px`;
+  const pct = l.fig.querySelector('.pct');
+  if (pct) pct.textContent = `${Math.round(s * 100)} %`;
 }
 
 /**
@@ -287,8 +415,10 @@ function render(next: PanelState): void {
       if (!l || cellKey(c) !== l.key) {
         // Otro dispositivo u otra sesión: la página tiene que arrancar de nuevo, en el mismo sitio de la fila.
         const nl = newCell(c);
-        if (l) l.fig.replaceWith(nl.fig);
-        else row.append(nl.fig);
+        if (l) {
+          l.fig.replaceWith(nl.fig);
+          if (l.errorCount > 0) vscode.postMessage({ t: 'errors', cell: c.id, n: 0 });
+        } else row.append(nl.fig);
         live.set(c.id, nl);
         loads.push([nl.frame, c.entry]);
         l = nl;
@@ -296,6 +426,15 @@ function render(next: PanelState): void {
       l.view = c;
       caption(c, l.fig);
     }
+    // En una matriz, «Añadir dispositivo» de la barra no sabe de qué fila hablas: cada fila tiene el suyo, al final.
+    let more = row.querySelector<HTMLButtonElement>(':scope > .mas');
+    if (groups.length > 1 && next.cells.length < MAX_CELLS) {
+      if (!more) {
+        more = withKey(button(next.text.addToRow, 'plus', () => pick(undefined, g), { iconOnly: true }), `fila${g}:add`);
+        more.classList.add('mas');
+      }
+      row.append(more); // siempre el último, también tras añadir una celda
+    } else more?.remove();
   }
   for (const r of Array.from(rootEl.querySelectorAll<HTMLElement>('.fila'))) if (!r.querySelector('figure')) r.remove();
   layout();
@@ -306,13 +445,64 @@ function render(next: PanelState): void {
 
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 
+/** Vuelve a entrar en la celda por su dirección de entrada (la que da el host), con otra ruta. */
+function reenter(l: Live, path: string): void {
+  try {
+    const u = new URL(l.view.entry);
+    u.searchParams.set('to', path); // el proxy la vuelve a validar (safeLocalPath)
+    l.agentless = false;
+    l.frame.src = u.href;
+  } catch {
+    /* entrada ilegible: nada */
+  }
+}
+
 window.addEventListener('message', (ev: MessageEvent) => {
   // 1) ¿Viene de una celda? Se exige ventana Y origen: una página no puede hacerse pasar por otra.
   for (const [id, l] of live) {
     if (ev.source !== l.frame.contentWindow) continue;
     const m = ev.data as (AgentEvent & { vk?: number }) | undefined;
     if (ev.origin !== l.view.origin || !m || m.vk !== 1 || typeof m.t !== 'string') return;
+    if (m.t === 'hello') {
+      l.greeted = true;
+      l.agentless = false;
+    }
     for (const d of router.route(id, m)) toCell(d.to, d.cmd);
+    if (m.t === 'hello' && (l.errorCount > 0 || l.errorsOpen)) {
+      l.errors = [];
+      l.errorCount = 0;
+      l.errorsOpen = false;
+      paintErrors(id);
+      vscode.postMessage({ t: 'errors', cell: id, n: 0 });
+    }
+    if (m.t === 'error') {
+      if (typeof m.msg !== 'string' || typeof m.kind !== 'string') return;
+      l.errorCount++;
+      if (l.errors.length < MAX_ERRORS_KEPT) l.errors.push({ kind: m.kind.slice(0, 12), msg: m.msg.slice(0, 300) });
+      paintErrors(id);
+      // Al host, solo el número: el mensaje de un error puede llevar datos de la página.
+      vscode.postMessage({ t: 'errors', cell: id, n: l.errorCount });
+      if (state?.sonda) vscode.postMessage({ t: 'fromCell', cell: id, ev: m });
+      return;
+    }
+    if (m.t === 'left') {
+      // La página quiso irse a otra web: no cabe en la celda (se quedaría en blanco). Se dice un momento en su rótulo.
+      if (typeof m.origin !== 'string' || !state) return;
+      let host = '';
+      try {
+        host = new URL(m.origin).host;
+      } catch {
+        return;
+      }
+      l.fig.querySelector('.fuera')?.remove();
+      const p = document.createElement('p');
+      p.className = 'fuera';
+      p.textContent = `${state.text.left}: ${host}`;
+      l.fig.querySelector('figcaption')?.after(p);
+      setTimeout(() => p.remove(), 6000);
+      vscode.postMessage({ t: 'left', cell: id, origin: m.origin.slice(0, 80) });
+      return;
+    }
     if (m.t === 'hello' || m.t === 'ready' || m.t === 'nav') {
       if (typeof m.url !== 'string') return;
       const cap = l.fig.querySelector('.ruta');
@@ -333,21 +523,35 @@ window.addEventListener('message', (ev: MessageEvent) => {
   }
   // 2) Si no, solo se atiende al host de la extensión, que llega con el origen del propio webview.
   if (ev.origin !== window.origin) return;
-  const m = ev.data as { t?: string; state?: PanelState; cell?: string; cmd?: AgentCommand } | undefined;
+  const m = ev.data as { t?: string; state?: PanelState; cell?: string; cmd?: AgentCommand; group?: number; path?: string } | undefined;
   if (!m) return;
   if (m.t === 'state' && m.state) render(m.state);
   else if (m.t === 'toCell' && m.cell && m.cmd) toCell(m.cell, m.cmd);
+  else if (m.t === 'drive' && typeof m.group === 'number' && typeof m.path === 'string' && m.path.startsWith('/')) {
+    // El usuario manda la fila a otra página (desde el rótulo o desde el editor): pasa por el reparto, que
+    // apunta la orden en cada celda para que su llegada no rebote.
+    for (const d of router.drive(m.group, m.path)) toCell(d.to, d.cmd);
+    // Una celda sin agente no recibe la orden: se le vuelve a poner la dirección de entrada, con la ruta nueva.
+    for (const l of live.values()) if (l.view.group === m.group && l.agentless) reenter(l, m.path);
+  }
   else if (m.t === 'reload') {
     // Recargar rearma el cortacircuitos y retira su aviso (N-2).
     router.rearm();
     for (const a of Array.from(rootEl.querySelectorAll('.aviso'))) a.remove();
-    for (const id of live.keys()) toCell(id, { t: 'reload' });
+    for (const [id, l] of live) {
+      if (l.agentless) reenter(l, router.currentPath(id) ?? l.view.path);
+      else toCell(id, { t: 'reload' });
+    }
   }
 });
 
 new ResizeObserver(layout).observe(rootEl);
 // El observador solo ve el ancho del mosaico; si la ventana crece solo en alto, las celdas también deben crecer.
 window.addEventListener('resize', layout);
+// Esc deshace la ampliación (el foco está en el panel; dentro de una celda, la tecla es de la página).
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && zoomed) toggleZoom(zoomed);
+});
 // Navegaciones en espera (GRACE_MS): las celdas que no llegaron solas reciben la orden.
 setInterval(() => {
   for (const d of router.due()) toCell(d.to, d.cmd);

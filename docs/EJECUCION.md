@@ -86,6 +86,13 @@ Copiados del plan (§15), con lo que cambia por ser gratuita marcado.
 - **No había forma de abrir una web publicada** (lo vio el titular con `https://neurosinais.argalla.com/pacientes`): con un servidor detectado, el botón lo abría directamente, y con un mosaico abierto solo lo traía al frente. Ahora el botón ofrece siempre una lista donde se escribe la dirección, hay un comando «Abrir mosaico de una dirección» y un botón «Dirección» en el panel. Prueba I-8 (comprobada con la función antigua: falla). Revisión independiente: 3 defectos (matriz aplanada, palabra suelta sin abrir, `/ruta` tomada por servidor), corregidos.
 - Probado el proxy contra webs publicadas (estoxo.gal, wikipedia.org, github.com): HTTPS, agente inyectado y cookies reescritas. Límites en producción documentados en el README.
 
+### Plan de mejoras — 0.2.0 (19 y 20-11)
+- Plan con código en `docs/PLAN-MEJORAS.md` (generado por `docs/plan/montar.mjs` desde la historia de la rama `plan/mejoras`). El titular pidió ejecutarlo entero y publicarlo tras una auditoría completa: una sola versión, la 0.2.0.
+- Fases A–D: commits `bb23f8b` a `a9edd4e`. Auditoría A (proxy y agente): 16 defectos, corregidos en `f364e3c`. Auditoría B (panel y comandos): 16 defectos, corregidos en `a245abf`. Escáner de seguridad (`CLAUDE-SECURITY-20261120-071139/`, verificado): 6 hallazgos, corregidos en `a4cc227`. Cada arreglo, con una prueba comprobada por mutación.
+- Comprobado aparte: API de fuera real (httpbin.org) por el paso del proxy; ventana remota en WSL; captura real con Chrome tras sacar el tique de la línea de órdenes.
+- **Lo que no se pudo comprobar:** SSH y contenedores (la extensión Dev Containers no conecta cuando VS Code arranca en modo prueba); Cursor (no está instalado). Declarado en el README.
+- **Lecciones:** la etiqueta de 32 bits por destino venía de la Fase 1 y nadie la vio en tres auditorías: la encontró el escáner. Y un auditor que recibe el código, no la conclusión, encuentra cosas distintas cada vez: 16 + 16 + 6 en código con todo en verde.
+
 ## Si esto se retoma en otra sesión
 
 Todo cerrado. Siguiente versión: subir versión y CHANGELOG, etiqueta `vX.Y.Z`; `node scripts/gh-runs.mjs release --esperar` sigue la publicación. Lo pendiente está en `docs/ENTREGA.md`.

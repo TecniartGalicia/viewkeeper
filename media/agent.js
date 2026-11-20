@@ -1,11 +1,24 @@
 // Agente de ViewKeeper. Lo inyecta el proxy en cada documento HTML y corre DENTRO de la página del usuario.
 // Reglas: ES2017 sin dependencias; no toca nada si no está en una celda; solo habla con el origen del panel,
-// que el proxy le da incrustado (__VK_PANEL) y que la página no puede cambiar; y nunca envía contenido de la
-// página: solo eventos de interacción y métricas.
+// que el proxy le da incrustado (__VK_PANEL) y que la página no puede cambiar; y al panel solo le manda eventos
+// de interacción, métricas y el mensaje de los errores de JavaScript (que el panel no pasa al host).
 (function () {
   'use strict';
   var PANEL = typeof __VK_PANEL === 'string' ? __VK_PANEL : '';
   var APIS = typeof __VK_APIS === 'object' && __VK_APIS ? __VK_APIS : [];
+  // Los orígenes de la propia app (su dominio con y sin «www», por http y https). Dentro de la celda la app
+  // vive en el origen del proxy: lo que la nombre con su dominio completo se convierte en una ruta local.
+  var TARGETS = typeof __VK_TARGETS === 'object' && __VK_TARGETS ? __VK_TARGETS : [];
+  function base() { try { return document.baseURI || location.href; } catch (e) { return location.href; } }
+  // Devuelve la dirección equivalente en el origen de la celda, siempre absoluta (A-1: una ruta «//host/…»
+  // devuelta tal cual se leería como otro servidor; A-4: una ruta relativa se resolvería contra un <base>).
+  function localPath(u) {
+    try {
+      var url = new URL(String(u), base());
+      if (url.origin === location.origin || TARGETS.indexOf(url.origin) < 0) return null;
+      return location.origin + url.pathname + url.search + url.hash;
+    } catch (e) { return null; }
+  }
   var name = String(window.name || '');
   // Una celda: incrustada, con panel conocido y con el nombre que pone el panel.
   var inCell = window.top !== window && !!PANEL && name.indexOf('vk:') === 0;
@@ -14,16 +27,22 @@
   // ── API en otro puerto: la página la llama por el proxy, que la reenvía con el origen de la app.
   // Se instala también fuera de una celda (la captura abre la página en primer nivel) (N-5).
   function viaProxy(u) {
+    // La propia app llamada con su dominio completo: es una petición local, no una API aparte.
+    var own = localPath(u);
+    if (own !== null) return own;
     try {
-      var url = new URL(String(u), location.href);
+      var url = new URL(String(u), base());
       var i = APIS.indexOf(url.origin);
-      return i < 0 ? null : '/__viewkeeper/api/' + i + url.pathname + url.search;
+      return i < 0 ? null : location.origin + '/__viewkeeper/api/' + i + url.pathname + url.search;
     } catch (e) { return null; }
   }
+  // Una llamada a otro origen que falla suele ser CORS: la API admite el origen de la app y no el de la celda.
+  // De esta máquina, por http o https; de fuera, solo https (lo único que el proxy acepta reenviar).
   function isLocalOther(u) {
     try {
-      var url = new URL(String(u), location.href);
-      return url.origin !== location.origin && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
+      var url = new URL(String(u), base());
+      if (url.origin === location.origin) return false;
+      return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname) ? /^https?:$/.test(url.protocol) : url.protocol === 'https:';
     } catch (e) { return false; }
   }
   if ((APIS.length || inCell) && !window.__vkApi) {
@@ -80,6 +99,97 @@
   hintFn = function (u) {
     try { var o = new URL(String(u), location.href).origin; if (!hinted[o]) { hinted[o] = true; send({ t: 'hint', kind: 'api', origin: o }); } } catch (e) { /* nada */ }
   };
+
+  // ── la app nombrada con su dominio completo, y las salidas del mosaico.
+  // Un enlace o un formulario que apunta al dominio real sacaría a la celda del proxy (y el panel no deja:
+  // se quedaría en blanco). Justo antes de que actúe se le pone la ruta local, y el clic sigue su curso
+  // normal: el enrutador de una SPA, el menú contextual, todo ve un enlace de la propia página.
+  function attr(el, name) { try { return el.getAttribute(name); } catch (e) { return null; } }
+  function fixLink(ev) {
+    if (ev.button === 1 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.type === 'auxclick') return;
+    var t = ev.target;
+    var a = t && t.closest ? t.closest('a[href],area[href]') : null;
+    if (!a) return;
+    var tg = attr(a, 'target');
+    if (tg && tg.toLowerCase() !== '_self') return;
+    var p = localPath(attr(a, 'href'));
+    if (p !== null) a.setAttribute('href', p);
+  }
+  ['pointerdown', 'click', 'auxclick', 'keydown'].forEach(function (k) { document.addEventListener(k, fixLink, true); });
+  function fixForm(f, by) {
+    if (by && attr(by, 'formaction')) { var q = localPath(attr(by, 'formaction')); if (q !== null) by.setAttribute('formaction', q); }
+    if (f && attr(f, 'action')) { var p = localPath(attr(f, 'action')); if (p !== null) f.setAttribute('action', p); }
+  }
+  document.addEventListener('submit', function (ev) { fixForm(ev.target, ev.submitter); }, true);
+  try {
+    var realSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () { fixForm(this, null); return realSubmit.apply(this, arguments); };
+  } catch (e) { /* sin permiso */ }
+  // Lo que navega por código (location.href = …) no pasa por un enlace: se caza con la API de navegación.
+  // A la propia app, se va a la ruta local; a otra web, no se va (la celda quedaría en blanco) y se avisa
+  // al panel con el origen, para que diga qué ha pasado.
+  var lefts = 0;
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigate', function (ev) {
+      if (!ev.cancelable || ev.hashChange || ev.downloadRequest) return;
+      var dest;
+      try { dest = new URL(ev.destination.url); } catch (e) { return; }
+      if (dest.origin === location.origin || !/^https?:$/.test(dest.protocol)) return;
+      var p = localPath(dest.href);
+      if (p !== null && !ev.formData) {
+        ev.preventDefault();
+        if (ev.navigationType === 'replace') location.replace(p); else location.assign(p);
+        return;
+      }
+      // A otra web, o un envío con cuerpo al dominio propio que no pasó por «submit» ni por form.submit():
+      // no se puede repetir aquí con su cuerpo, así que no se va y se dice (antes la celda quedaba en blanco).
+      ev.preventDefault();
+      if (lefts++ < 20) send({ t: 'left', origin: dest.origin });
+    });
+  }
+
+  // ── errores de la página: para ver de un vistazo que «en el móvil falla y en el escritorio no».
+  // El agente se carga antes que los scripts de la página, así que oye también los de arranque. El texto
+  // se queda en el panel, que lo enseña en el rótulo de la celda; al host solo llega la cuenta.
+  var errs = 0;
+  function describe(a) {
+    try {
+      if (a == null) return String(a);
+      if (typeof a !== 'object' && typeof a !== 'function') return String(a);
+      if (typeof a.message === 'string' && a.message) return (a.name ? a.name + ': ' : '') + a.message;
+      if (a.nodeType === 1) return '<' + String(a.localName) + '>';
+      var j = JSON.stringify(a);
+      if (j && j !== '{}') return j;
+      return Object.prototype.toString.call(a);
+    } catch (e) {
+      return Object.prototype.toString.call(a); // cíclico o con un getter que lanza
+    }
+  }
+  function report(kind, msg) {
+    if (errs >= 50) return; // una página en bucle de errores no inunda el panel
+    errs++;
+    var text = '';
+    try { text = String(msg).slice(0, 300); } catch (e) { text = '?'; }
+    send({ t: 'error', kind: kind, msg: text || '(' + kind + ')' });
+  }
+  window.addEventListener('error', function (ev) {
+    // Solo errores de JavaScript: una imagen que no carga llega con otro destino y sin mensaje.
+    if (ev.target !== window || typeof ev.message !== 'string') return;
+    var where = ev.filename ? ' (' + String(ev.filename).split('/').pop().split('?')[0] + ':' + ev.lineno + ')' : '';
+    report('error', ev.message + where);
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    report('rejection', describe(ev.reason));
+  });
+  if (window.console && typeof console.error === 'function') {
+    var realConsoleError = console.error;
+    console.error = function () {
+      try {
+        report('console', Array.prototype.map.call(arguments, describe).join(' '));
+      } catch (e) { /* un argumento que no se deja leer */ }
+      return realConsoleError.apply(console, arguments);
+    };
+  }
 
   // ── emulación por celda, del lado del cliente (lo que un iframe sí permite)
   function define(obj, prop, value) {
@@ -299,17 +409,31 @@
   function navChanged() { gestureSent = 0; send({ t: 'nav', url: here() }); }
   ['pushState', 'replaceState'].forEach(function (k) {
     var orig = history[k];
-    history[k] = function () { var r = orig.apply(this, arguments); navChanged(); return r; };
+    history[k] = function () {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length > 2 && args[2] != null) { var p = localPath(args[2]); if (p !== null) args[2] = p; }
+      var r = orig.apply(this, args);
+      navChanged();
+      return r;
+    };
   });
   window.addEventListener('popstate', navChanged);
   window.addEventListener('hashchange', navChanged);
+  var leaving = false;
   function applyNav(m) {
     if (typeof m.path !== 'string') return;
     var u;
     try { u = new URL(m.path, location.origin); } catch (e) { return; }
     if (u.origin !== location.origin) return; // nunca fuera de la celda
     var next = u.pathname + u.search + u.hash;
-    if (next !== location.pathname + location.search + location.hash) location.assign(next);
+    if (next !== location.pathname + location.search + location.hash) {
+      leaving = true;
+      location.assign(location.origin + next);
+    } else if (leaving) {
+      // Iba de camino a otra página y le piden quedarse donde está: se corta la carga en vuelo (B-1).
+      leaving = false;
+      try { window.stop(); } catch (e) { /* nada */ }
+    }
   }
 
   // ── preguntas del panel. Solo métricas; nunca contenido de la página.

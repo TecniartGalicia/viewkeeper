@@ -33,13 +33,19 @@ export const SYNC_ALL: SyncOptions = { scroll: true, click: true, input: true, n
 export const MAX_CELLS = 12;
 
 const SESSION_RE = /^[a-z0-9]{1,20}$/;
+/** La forma de un identificador de dispositivo, de los de serie o de los propios (devices.ts, parseCustomDevice). */
+export const DEVICE_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** Acepta '3000', 'localhost:3000', 'http://127.0.0.1:5173/ruta'. Devuelve origen y ruta, o undefined. */
 export function normalizeTarget(input: string): { origin: string; path: string } | undefined {
   let s = input.trim();
   if (s === '' || s.startsWith('/')) return undefined; // «/pacientes» es una ruta, no un servidor llamado «pacientes»
   if (/^\d{2,5}$/.test(s)) s = 'http://localhost:' + s;
-  else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'http://' + s;
+  else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    // Sin esquema: un servidor de desarrollo, por http; una web publicada, por https. Si no, un atacante en la red
+    // podría quitar la redirección a https y el proxy, que no tiene HSTS, mandaría el inicio de sesión en claro (F6).
+    s = (isDevHost('http://' + s) ? 'http://' : 'https://') + s;
+  }
   let u: URL;
   try {
     u = new URL(s);
@@ -58,6 +64,38 @@ export function isLoopback(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * ¿Es un servidor de desarrollo (esta máquina o la red local)? Lo demás se trata como una web publicada,
+ * con datos de verdad. Sin lista de sufijos públicos: IP privadas, nombres sin punto y los dominios reservados
+ * para redes locales y pruebas.
+ */
+export function isDevHost(origin: string): boolean {
+  let h: string;
+  try {
+    h = new URL(origin).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    return false;
+  }
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h.startsWith('[')) return h === '[::1]' || h === '[::]' || /^\[(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/.test(h) || /^\[::ffff:(7f|a|c0a8|ac1[0-9a-f]|a9fe)[0-9a-f]{0,2}:/.test(h);
+  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (ip) {
+    const a = Number(ip[1]);
+    const b = Number(ip[2]);
+    return a === 0 || a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (!h.includes('.')) return true; // «mipc», «intranet»: un nombre de la red local
+  return /\.(local|test|internal|lan|home\.arpa|example|invalid)$/.test(h);
+}
+
+/**
+ * En una web publicada, cada clic y cada tecla se repetirían una vez por celda sobre datos reales («Guardar»
+ * pulsado tres veces). Ahí esas dos sincronizaciones nacen apagadas; el usuario las enciende si quiere.
+ */
+export function syncForTarget(target: string, sync: SyncOptions): SyncOptions {
+  return isDevHost(target) ? sync : { ...sync, click: false, input: false };
 }
 
 /** Ruta local y codificada. Se resuelve como el navegador (que ignora tabuladores): si cambia de origen, se descarta. */
@@ -104,7 +142,8 @@ export function parseMosaic(raw: unknown): Mosaic | undefined {
     if (typeof c !== 'object' || c === null) continue;
     const x = c as Record<string, unknown>;
     if (typeof x.id !== 'string' || !/^[a-z0-9]{1,16}$/i.test(x.id) || seen.has(x.id)) continue;
-    if (typeof x.deviceId !== 'string' || typeof x.path !== 'string') continue;
+    // El identificador del dispositivo viene del repositorio y acaba en textos de la interfaz: solo la forma de un identificador (F2).
+    if (typeof x.deviceId !== 'string' || !DEVICE_ID.test(x.deviceId) || typeof x.path !== 'string') continue;
     const session = typeof x.session === 'string' && SESSION_RE.test(x.session) ? x.session : 'main';
     const group = Number.isInteger(x.group) && (x.group as number) >= 0 && (x.group as number) < MAX_CELLS ? (x.group as number) : 0;
     const locale = typeof x.locale === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(x.locale) ? x.locale : undefined;
@@ -162,7 +201,8 @@ export function applyEdit(m: Mosaic, raw: unknown, known: (deviceId: string) => 
       return cell ? { ...m, cells: m.cells.filter((c) => c !== cell) } : m;
     case 'add': {
       if (typeof e.deviceId !== 'string' || !known(e.deviceId) || m.cells.length >= MAX_CELLS) return m;
-      const group = Number.isInteger(e.group) && (e.group as number) >= 0 && (e.group as number) < MAX_CELLS ? (e.group as number) : (m.cells[0]?.group ?? 0);
+      // Solo a una fila que existe (el «+» de cada fila); cualquier otra cosa, a la primera.
+      const group = Number.isInteger(e.group) && m.cells.some((c) => c.group === e.group) ? (e.group as number) : (m.cells[0]?.group ?? 0);
       // La celda nueva copia ruta y sesión de la fila a la que se suma, para entrar ya sincronizada.
       const like = m.cells.find((c) => c.group === group) ?? m.cells[0];
       const added: Cell = { id: nextId(m.cells), deviceId: e.deviceId, landscape: false, path: like?.path ?? '/', session: like?.session ?? 'main', group: like ? group : 0, locale: like?.locale };

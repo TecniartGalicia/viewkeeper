@@ -81,6 +81,18 @@ export interface CaptureIo {
   exists(path: string): Promise<boolean>;
   /** Ejecuta sin shell (execFile). Resuelve el código de salida. */
   run(exe: string, args: string[], timeoutMs: number): Promise<number>;
+  /**
+   * Guarda la dirección de entrada en una página local privada que lleva a ella, y devuelve la dirección de esa
+   * página. Así el tique de captura no aparece en la línea de órdenes del navegador, que otros usuarios de la
+   * máquina pueden leer (escáner de seguridad, F1). `drop` la borra en cuanto el navegador termina.
+   */
+  stash?(url: string, dir: string): Promise<{ href: string; drop(): void }>;
+}
+
+/** La página que lleva a `url`. Sin scripts: una redirección de meta. */
+export function redirectPage(url: string): string {
+  const attr = url.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${attr}"><title>ViewKeeper</title></head><body></body></html>`;
 }
 
 export async function findBrowser(io: CaptureIo, platform: NodeJS.Platform, env: Readonly<Record<string, string | undefined>>, configured?: string): Promise<string | undefined> {
@@ -94,9 +106,19 @@ export async function capture(io: CaptureIo, exe: string, shots: readonly Shot[]
   const ok: Shot[] = [];
   const failed: Shot[] = [];
   for (const s of shots) {
-    const code = await io.run(exe, captureArgs(s, profileDir), 30000).catch(() => -1);
-    if (code === 0 && (await io.exists(s.out))) ok.push(s);
-    else failed.push(s);
+    const raw = typeof s.url === 'function' ? s.url() : s.url;
+    const kept = io.stash && /^https?:/i.test(raw) ? await io.stash(raw, profileDir).catch(() => undefined) : undefined;
+    if (io.stash && /^https?:/i.test(raw) && !kept) {
+      failed.push(s); // sin página privada no se pone el tique en la línea de órdenes
+      continue;
+    }
+    try {
+      const code = await io.run(exe, captureArgs({ ...s, url: kept?.href ?? raw }, profileDir), 30000).catch(() => -1);
+      if (code === 0 && (await io.exists(s.out))) ok.push(s);
+      else failed.push(s);
+    } finally {
+      kept?.drop();
+    }
   }
   return { ok, failed };
 }
