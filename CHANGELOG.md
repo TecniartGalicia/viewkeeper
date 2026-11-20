@@ -20,6 +20,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - A view that loaded a route returning plain text or JSON could no longer be sent anywhere; now it re-enters through its entry address.
 - Sending a row back while it was still loading another route did nothing.
+- A view could start its page at 300 px wide (the default size of a frame) on a slow machine, before getting its device size; page scripts that read the width at start-up saw the wrong device.
 
 ### Security
 

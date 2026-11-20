@@ -306,6 +306,10 @@ function newCell(c: CellView): Live {
   // El nombre lleva la configuración de la celda: el agente la lee de forma síncrona al arrancar.
   f.name = 'vk:' + JSON.stringify(c.cfg);
   f.title = c.label;
+  // Nace con el tamaño del dispositivo: un iframe sin tamaño mide 300×150, y en una máquina lenta la página llegaba a
+  // arrancar con ese ancho antes de que la colocación se lo cambiara (lo vio el CI de macOS: tableta a 300 px).
+  f.width = String(c.width);
+  f.height = String(c.height);
   // Sin allow-top-navigation: una app con código anti-iframe no puede llevarse el panel por delante.
   f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads');
   stage.append(f);
